@@ -361,6 +361,11 @@
       </span>
     </div>
     <div class="field">
+      <label>Project number <span style="color:var(--text2);font-weight:400">(for Status &amp; target date)</span></label>
+      <input type="number" id="projectInput" placeholder="e.g. 1" min="1">
+      <span class="hint">Your project URL: github.com/orgs/…/projects/<strong>N</strong> — needs <code>read:project</code> scope</span>
+    </div>
+    <div class="field">
       <label>Cloudflare proxy URL <span style="color:var(--text2);font-weight:400">(for blocking arrows)</span></label>
       <input type="text" id="proxyInput" placeholder="https://github-proxy.yourname.workers.dev" autocomplete="off" spellcheck="false">
       <span class="hint">Paste your Worker URL here. Leave blank if running from localhost.</span>
@@ -489,7 +494,8 @@ async function connect() {
 
   setConnectLoading(true);
   const proxyUrl = document.getElementById('proxyInput').value.trim().replace(/\/+$/, '');
-  cfg = { repo, token, poll, proxyUrl };
+  const projectNum = parseInt(document.getElementById('projectInput').value) || null;
+  cfg = { repo, token, poll, proxyUrl, projectNum };
 
   const ok = await fetchIssues(true);
   if (!ok) { setConnectLoading(false); return; }
@@ -586,6 +592,7 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
     if (blockedBy[b] !== undefined) blockedBy[b].push(a);
   }
   const inProgressLabels = new Set(['in progress','in-progress','wip','doing','started','in_progress']);
+  const inProgressProjectStatuses = new Set(['in progress','in-progress','in_progress','doing','started','wip','active','in review','in-review']);
   issues = rawIssues.map(i => {
     const labelNodes = Array.isArray(i.labels) ? i.labels : (i.labels?.nodes || []);
     const labelNames = labelNodes.map(l => l.name.toLowerCase());
@@ -594,7 +601,9 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
       const dep = issueMap[n]; return dep && dep.state === 'open';
     });
     let status = i.state === 'closed' ? 'closed' : 'open';
-    if (status === 'open' && labelNames.some(l => inProgressLabels.has(l))) status = 'inprogress';
+    // Project status takes priority over labels
+    const ps = (i.projectStatus || '').toLowerCase();
+    if (status === 'open' && (inProgressProjectStatuses.has(ps) || labelNames.some(l => inProgressLabels.has(l)))) status = 'inprogress';
     if (status === 'open' && isBlocked) status = 'blocked';
     // parents: issues this one is a child of
     const parents = [...parentEdges]
@@ -609,6 +618,8 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
       blockedBy: blockedBy[i.number] || [],
       blocksOthers: [],
       parents,
+      targetDate: i.targetDate || null,
+      projectStatus: i.projectStatus || null,
     };
   });
   issues.forEach(iss => {
@@ -641,6 +652,79 @@ function showCorsWarning() {
     <a href="#" onclick="document.getElementById(\'corsWarning\').remove();return false" style="color:#fff8c5">Dismiss</a>
     </span>`;
   document.body.appendChild(banner);
+}
+
+// Fetch project Status and target date for all issues via GraphQL
+async function fetchProjectMeta(owner, projectNum, out) {
+  const isOrg = await checkIsOrg(owner);
+  const ownerType = isOrg ? 'organization' : 'user';
+  const q = `
+    query($owner:String!,$num:Int!,$cursor:String){
+      ${ownerType}(login:$owner){
+        projectV2(number:$num){
+          items(first:100,after:$cursor){
+            pageInfo{hasNextPage endCursor}
+            nodes{
+              content{ ... on Issue { number } }
+              fieldValues(first:20){
+                nodes{
+                  __typename
+                  ... on ProjectV2ItemFieldSingleSelectValue{
+                    name field{ ... on ProjectV2FieldCommon{ name } }
+                  }
+                  ... on ProjectV2ItemFieldDateValue{
+                    date field{ ... on ProjectV2FieldCommon{ name } }
+                  }
+                  ... on ProjectV2ItemFieldIterationValue{
+                    title startDate duration
+                    field{ ... on ProjectV2FieldCommon{ name } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`;
+  let cursor = null;
+  while (true) {
+    const data = await ghGraphQL(q, { owner, num: projectNum, cursor });
+    if (data.errors) { console.warn('Project meta errors:', data.errors.map(e=>e.message).join('; ')); break; }
+    const proj = data?.data?.[ownerType]?.projectV2;
+    if (!proj) { console.warn('Project not found — check project number and token has read:project scope'); break; }
+    for (const item of proj.items.nodes) {
+      const issueNum = item.content?.number;
+      if (!issueNum) continue;
+      const meta = { projectStatus: null, targetDate: null };
+      for (const fv of (item.fieldValues?.nodes || [])) {
+        const fname = (fv.field?.name || '').toLowerCase();
+        if (fv.__typename === 'ProjectV2ItemFieldSingleSelectValue') {
+          // "Status" field
+          if (fname === 'status') meta.projectStatus = fv.name;
+        }
+        if (fv.__typename === 'ProjectV2ItemFieldDateValue') {
+          // Any date field named target/due/deadline
+          if (/target|due|deadline|end|finish/i.test(fname)) meta.targetDate = fv.date;
+        }
+        if (fv.__typename === 'ProjectV2ItemFieldIterationValue') {
+          // Iteration end date as proxy for target date
+          if (!meta.targetDate && fv.startDate && fv.duration) {
+            const start = new Date(fv.startDate);
+            start.setDate(start.getDate() + fv.duration);
+            meta.targetDate = start.toISOString().slice(0,10);
+          }
+        }
+      }
+      out[issueNum] = meta;
+    }
+    if (!proj.items.pageInfo.hasNextPage) break;
+    cursor = proj.items.pageInfo.endCursor;
+  }
+}
+
+async function checkIsOrg(owner) {
+  const data = await ghGraphQL(`query($login:String!){ organization(login:$login){ id } }`, { login: owner });
+  return !!data?.data?.organization?.id;
 }
 
 // Fetch all issues via REST, then get blocking data from Projects v2 + body text
@@ -709,10 +793,20 @@ async function fetchIssues(initial = false) {
     // 3. Body text fallback (always runs — catches "blocked by #N" in descriptions)
     all.forEach(i => parseBodyEdges(i, issueNums, blockingEdges));
 
+    // 4. Fetch project Status + target date via GraphQL (CORS-safe)
+    const projectMeta = {}; // keyed by issue number: { projectStatus, targetDate }
+    if (cfg.projectNum) {
+      try {
+        await fetchProjectMeta(owner, cfg.projectNum, projectMeta);
+      } catch(e) { console.warn('Project meta fetch failed:', e.message); }
+    }
+
     const normalised = all.map(i => ({
       number: i.number, title: i.title, state: i.state,
       body: i.body || '', url: i.html_url,
       labels: i.labels || [], assignees: i.assignees || [],
+      projectStatus: projectMeta[i.number]?.projectStatus || null,
+      targetDate:    projectMeta[i.number]?.targetDate    || null,
     }));
     buildIssues(normalised, blockingEdges, parentEdges);
     return true;
@@ -750,9 +844,10 @@ function renderSidebar() {
   list.innerHTML = filtered.map(i => {
     const pillLabel = {open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
     const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(n=>'#'+n).join(', ')}</span>` : '';
+    const dateStr = i.targetDate ? `<span style="font-size:11px;color:var(--text2);margin-left:4px">⊙ ${i.targetDate}</span>` : '';
     return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue(${i.id})">
       <div class="issue-item-header"><span class="issue-num">#${i.id}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
-      <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}</div>
+      <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}${dateStr}</div>
     </div>`;
   }).join('');
 }
@@ -783,7 +878,8 @@ function showDetail(id) {
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const labels = iss.labels.map(l=>{const c=l.color||'aaa';return `<span class="pill" style="background:#${c}22;color:#${c};border-color:#${c}88">${l.name}</span>`;}).join(' ')||'—';
   document.getElementById('detailBody').innerHTML = `
-    <div><div class="detail-section-label">Status</div><span class="pill ${iss.status}">${{open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[iss.status]}</span></div>
+    <div><div class="detail-section-label">Status</div><span class="pill ${iss.status}">${{open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[iss.status]}${iss.projectStatus?' ('+iss.projectStatus+')':''}</span></div>
+    ${iss.targetDate?`<div><div class="detail-section-label">Target date</div><div style="font-size:13px">${iss.targetDate}</div></div>`:''}
     ${iss.assignees.length?`<div><div class="detail-section-label">Assignees</div><div style="font-size:13px">${iss.assignees.join(', ')}</div></div>`:''}
     <div><div class="detail-section-label">Labels</div><div style="display:flex;gap:4px;flex-wrap:wrap">${labels}</div></div>
     <div><div class="detail-section-label">Blocked by</div>${prereqs}</div>
