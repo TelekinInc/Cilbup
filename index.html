@@ -766,16 +766,20 @@ function showDetail(id) {
   if (!iss) return;
   document.getElementById('detail').classList.add('open');
   document.getElementById('detailTitle').textContent = '#'+iss.id+' '+iss.title;
-  const prereqs = iss.blockedBy.map(n=>{\n    const d=issues.find(i=>i.id===n);
+  const prereqs = iss.blockedBy.map(n=>{
+    const d=issues.find(i=>i.id===n);
     return `<div class="dep-item"><span class="dep-arrow">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
-  const unlocks = iss.blocksOthers.map(n=>{\n    const d=issues.find(i=>i.id===n);
+  const unlocks = iss.blocksOthers.map(n=>{
+    const d=issues.find(i=>i.id===n);
     return `<div class="dep-item"><span class="dep-arrow" style="color:var(--green)">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
-  const parents = (iss.parents||[]).map(n=>{\n    const d=issues.find(i=>i.id===n);
+  const parents = (iss.parents||[]).map(n=>{
+    const d=issues.find(i=>i.id===n);
     return `<div class="dep-item"><span class="dep-arrow" style="color:var(--blue)">&#8593;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
-  const children = issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>{\n    return `<div class="dep-item"><span class="dep-arrow" style="color:var(--blue)">&#8595;</span><span>#${i.id} ${i.title.slice(0,28)}${i.title.length>28?'…':''}</span></div>`;
+  const children = issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>{
+    return `<div class="dep-item"><span class="dep-arrow" style="color:var(--blue)">&#8595;</span><span>#${i.id} ${i.title.slice(0,28)}${i.title.length>28?'…':''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const labels = iss.labels.map(l=>{const c=l.color||'aaa';return `<span class="pill" style="background:#${c}22;color:#${c};border-color:#${c}88">${l.name}</span>`;}).join(' ')||'—';
   document.getElementById('detailBody').innerHTML = `
