@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GitHub Dependency Map</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z'/%3E%3C/svg%3E">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -342,8 +343,8 @@
 <div id="setup">
   <div class="setup-card">
     <h1>
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
       </svg>
       GitHub Dependency Map
     </h1>
@@ -351,11 +352,11 @@
 
     <div class="field">
       <label>Organisation or user</label>
-      <input type="text" id="ownerInput" placeholder="e.g. TelekinInc" autocomplete="off" spellcheck="false">
+      <input type="text" id="ownerInput" placeholder="" autocomplete="off" spellcheck="false">
     </div>
     <div class="field">
       <label>Project number</label>
-      <input type="number" id="projectInput" placeholder="e.g. 1" min="1">
+      <input type="number" id="projectInput" placeholder="e.g. 1" min="1" value="1">
       <span class="hint">From your project URL: github.com/orgs/…/projects/<strong>N</strong></span>
     </div>
     <div class="field">
@@ -368,12 +369,12 @@
     </div>
     <div class="field">
       <label>Cloudflare proxy URL <span style="color:var(--text2);font-weight:400">(for blocking arrows)</span></label>
-      <input type="text" id="proxyInput" placeholder="https://github-proxy.yourname.workers.dev" autocomplete="off" spellcheck="false">
+      <input type="text" id="proxyInput" placeholder="https://github-proxy.yourname.workers.dev" value="https://workermap.j-cb9.workers.dev" autocomplete="off" spellcheck="false">
       <span class="hint">Paste your Worker URL here.</span>
     </div>
     <div class="field">
       <label>Single repo fallback <span style="color:var(--text2);font-weight:400">(optional — if no project number)</span></label>
-      <input type="text" id="repoInput" placeholder="e.g. TelekinInc/Admin" autocomplete="off" spellcheck="false">
+      <input type="text" id="repoInput" placeholder="" autocomplete="off" spellcheck="false">
     </div>
     <div class="field">
       <label>Poll interval</label>
@@ -395,8 +396,8 @@
 <!-- ── App ── -->
 <div id="appShell">
   <header>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;opacity:0.8">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
     </svg>
     <h2 id="repoLabel">— <span>loading…</span></h2>
     <div class="status-dot loading" id="statusDot"></div>
@@ -992,7 +993,7 @@ function renderSidebar() {
   list.innerHTML = filtered.map(i => {
     const pillLabel = {todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
     const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">${i.blockedBy.map(uid=>{const b=issues.find(x=>x.id===uid);return b?b.shortId:uid.split('/').pop();}).join(', ')}</span>` : '';
-    const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">📅 ${fmtDate(i.targetDate)}</span>` : '';
+    const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">${fmtDate(i.targetDate)}</span>` : '';
     return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue('${i.id}')">
       <div class="issue-item-header"><span class="issue-num">${i.shortId}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
       <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}${dateStr}</div>
@@ -1155,18 +1156,17 @@ function smartLayout() {
   const W = canvas.width || 900, H = canvas.height || 600;
   const HGAP = DEFAULT_W + 80;
   const VGAP = DEFAULT_H + 32;
-  const GROUP_GAP = DEFAULT_H + 48; // extra vertical gap between disconnected subgraphs
+  const GROUP_GAP = DEFAULT_H + 56;
 
-  // Layout each subgraph independently, then stack them vertically
   const subgraphs = findSubgraphs();
   let curY = 40;
 
   subgraphs.forEach(group => {
-    // Build layers for just this subgroup
     const groupIds = new Set(group);
     const ids = group;
-    const idSet = groupIds;
-    const edges = allEdges().filter(e => idSet.has(e.from) && idSet.has(e.to));
+    const edges = allEdges().filter(e => groupIds.has(e.from) && groupIds.has(e.to));
+
+    // Assign layers (longest-path)
     const preds = {};
     ids.forEach(id => { preds[id] = []; });
     edges.forEach(({from,to}) => preds[to].push(from));
@@ -1181,13 +1181,58 @@ function smartLayout() {
       });
       if (!changed) break;
     }
-    const numL = Math.max(...ids.map(id=>layer[id])) + 1;
-    const layers = Array.from({length:numL}, ()=>[]);
+    const numL = Math.max(...ids.map(id => layer[id])) + 1;
+    const layers = Array.from({length: numL}, () => []);
     ids.forEach(id => layers[layer[id]].push(id));
+
+    // Order within layers (barycenter)
     orderLayers(layers);
 
-    // Assign pixel positions within this subgraph
-    const subH = Math.max(...layers.map(l=>l.length)) * VGAP;
+    // Find long edges (spanning > 1 layer) and the "rank" of each node within its layer
+    const rank = {}; // id -> row index within its layer
+    layers.forEach(lyr => lyr.forEach((id, ri) => { rank[id] = ri; }));
+
+    // For each long edge, record which intermediate layers it passes through and at what y-fraction
+    // Then for each intermediate layer, nudge any node that sits in the arrow's path downward
+    const longEdges = edges.filter(e => layer[e.to] - layer[e.from] > 1);
+
+    // Build a "reserved rows" structure: for each intermediate layer, track y-slots occupied by long edges
+    // We use fractional row positions (the interpolated rank of the arrow at that layer)
+    const reservations = {}; // layerIdx -> sorted list of fractional row positions
+    longEdges.forEach(({from, to}) => {
+      const li0 = layer[from], li1 = layer[to];
+      const r0 = rank[from], r1 = rank[to];
+      for (let li = li0 + 1; li < li1; li++) {
+        const frac = (li - li0) / (li1 - li0);
+        const yFrac = r0 + frac * (r1 - r0); // interpolated row position
+        if (!reservations[li]) reservations[li] = [];
+        reservations[li].push(yFrac);
+      }
+    });
+
+    // For each intermediate layer with reservations, shift nodes that are too close to a reserved lane
+    layers.forEach((lyr, li) => {
+      if (!reservations[li] || !lyr.length) return;
+      const lanes = reservations[li].sort((a,b) => a-b);
+      // For each node, if its rank is within 0.6 of a reserved lane, push it away
+      const newRanks = lyr.map((id, ri) => ({ id, ri }));
+      lanes.forEach(lane => {
+        newRanks.forEach(nr => {
+          if (Math.abs(nr.ri - lane) < 0.65) {
+            // Push down if node is at or below the lane
+            if (nr.ri >= lane - 0.1) nr.ri = lane + 0.7;
+          }
+        });
+      });
+      // Re-sort and re-assign ranks so nodes don't overlap
+      newRanks.sort((a,b) => a.ri - b.ri);
+      newRanks.forEach((nr, i) => { nr.ri = i; rank[nr.id] = i; });
+      // Update layer order to match new ranks
+      layers[li] = newRanks.map(nr => nr.id);
+    });
+
+    // Assign pixel positions
+    const maxRows = Math.max(...layers.map(l => l.length));
     layers.forEach((lyr, li) => {
       lyr.forEach((id, ri) => {
         const ex = nodePos[id];
@@ -1199,6 +1244,7 @@ function smartLayout() {
         };
       });
     });
+    const subH = maxRows * VGAP;
     curY += subH + GROUP_GAP;
   });
 
