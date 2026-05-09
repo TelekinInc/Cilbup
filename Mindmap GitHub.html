@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Dependency Map</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f6f8fa;
+    --bg3: #eaeef2;
+    --border: #d0d7de;
+    --border2: #b0b8c4;
+    --text: #1f2328;
+    --text2: #656d76;
+    --text3: #9aa1aa;
+    --blue: #0969da;
+    --blue-bg: #ddf4ff;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --orange: #9a6700;
+    --orange-bg: #fff8c5;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --purple: #6639ba;
+    --purple-bg: #fbefff;
+    --arrow: #0969da;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --border2: #484f58;
+      --text: #e6edf3;
+      --text2: #8d96a0;
+      --text3: #6e7681;
+      --blue: #58a6ff;
+      --blue-bg: #031d2e;
+      --green: #3fb950;
+      --green-bg: #0d2b0f;
+      --orange: #d29922;
+      --orange-bg: #2b1f00;
+      --red: #f85149;
+      --red-bg: #2d0f0f;
+      --purple: #bc8cff;
+      --purple-bg: #1c0e3f;
+      --arrow: #58a6ff;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Setup screen ── */
+  #setup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 24px;
+  }
+  .setup-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    width: 100%;
+    max-width: 480px;
+  }
+  .setup-card h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .setup-card h1 svg { flex-shrink: 0; }
+  .setup-card p { font-size: 13px; color: var(--text2); margin-bottom: 24px; line-height: 1.5; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .field label { font-size: 13px; font-weight: 500; }
+  .field input, .field select {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(9,105,218,.15); }
+  .field .hint { font-size: 12px; color: var(--text2); }
+  .field .hint a { color: var(--blue); }
+  .btn {
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--bg3); }
+  .btn.primary {
+    background: var(--blue);
+    color: #fff;
+    border-color: transparent;
+  }
+  .btn.primary:hover { opacity: .88; }
+  .btn.sm { padding: 5px 12px; font-size: 12px; }
+  .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #setupError { font-size: 13px; color: var(--red); margin-top: 12px; display: none; }
+
+  /* ── App chrome ── */
+  #appShell { display: none; flex-direction: column; height: 100vh; }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  header h2 { font-size: 14px; font-weight: 600; flex: 1; }
+  header h2 span { color: var(--text2); font-weight: 400; }
+  .pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .pill.open { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+  .pill.closed { background: var(--bg3); color: var(--text2); border-color: var(--border); }
+  .pill.blocked { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+  .pill.inprogress { background: var(--orange-bg); color: var(--orange); border-color: var(--orange); }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+  }
+  .status-dot.error { background: var(--red); animation: none; }
+  .status-dot.loading { background: var(--orange); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Layout ── */
+  .app-body { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 300px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg2);
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-header input {
+    flex: 1;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+  }
+  .sidebar-header input:focus { border-color: var(--blue); }
+  .issue-list { flex: 1; overflow-y: auto; padding: 6px; }
+  .issue-item {
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background .1s;
+    border: 1px solid transparent;
+    margin-bottom: 2px;
+  }
+  .issue-item:hover { background: var(--bg3); }
+  .issue-item.selected { background: var(--blue-bg); border-color: var(--blue); }
+  .issue-item-header { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .issue-num { font-size: 11px; color: var(--text2); font-weight: 500; }
+  .issue-title-text { font-size: 13px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .issue-meta-row { display: flex; gap: 4px; flex-wrap: wrap; }
+
+  /* ── Map ── */
+  #mapWrap { flex: 1; position: relative; overflow: hidden; }
+  #mapCanvas { width: 100%; height: 100%; display: block; }
+  .map-controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .map-controls button {
+    width: 32px; height: 32px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--text);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .1s;
+  }
+  .map-controls button:hover { background: var(--bg3); }
+  .legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--text2);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .legend-row { display: flex; align-items: center; gap: 7px; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid; flex-shrink: 0; }
+  .legend-arr { width: 28px; height: 0; border-top: 2px solid var(--arrow); position: relative; flex-shrink: 0; }
+  .legend-arr::after { content:''; position:absolute; right:-1px; top:-5px; border-left:7px solid var(--arrow); border-top:4px solid transparent; border-bottom:4px solid transparent; }
+
+  /* ── Detail panel ── */
+  #detail {
+    width: 280px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    display: none;
+    flex-direction: column;
+    overflow-y: auto;
+    background: var(--bg2);
+  }
+  #detail.open { display: flex; }
+  .detail-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .detail-header h3 { font-size: 14px; font-weight: 600; flex: 1; line-height: 1.4; }
+  .detail-header button { color: var(--text2); background: none; border: none; font-size: 18px; cursor: pointer; line-height: 1; flex-shrink: 0; }
+  .detail-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 14px; }
+  .detail-section-label { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .detail-link { font-size: 13px; color: var(--blue); text-decoration: none; display: flex; align-items: center; gap: 4px; }
+  .detail-link:hover { text-decoration: underline; }
+  .dep-item { font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .dep-arrow { color: var(--arrow); font-size: 14px; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(60px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: transform .25s ease;
+    pointer-events: none;
+    z-index: 999;
+    white-space: nowrap;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── Spinner ── */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+  }
+  .empty-state svg { opacity: .4; }
+</style>
+</head>
+<body>
+
+<!-- ── Setup ── -->
+<div id="setup">
+  <div class="setup-card">
+    <h1>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+      </svg>
+      GitHub Dependency Map
+    </h1>
+    <p>Visualises your GitHub Issues' blocking relationships as a live dependency map. Refreshes automatically.<br><strong>Note:</strong> host on GitHub Pages or any https:// server for blocking arrows — the GitHub dependency API is CORS-blocked from local files. Issues load fine either way.</p>
+
+    <div class="field">
+      <label>Repository <span style="color:var(--text2);font-weight:400">(owner/repo)</span></label>
+      <input type="text" id="repoInput" placeholder="e.g. facebook/react" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Personal access token</label>
+      <input type="password" id="tokenInput" placeholder="ghp_…" autocomplete="off" spellcheck="false">
+      <span class="hint">
+        Needs <code>repo</code> and <code>read:project</code> scopes.
+        <a href="https://github.com/settings/tokens/new?scopes=repo,read:project" target="_blank" rel="noopener">Generate one here ↗</a>
+      </span>
+    </div>
+    <div class="field">
+      <label>Cloudflare proxy URL <span style="color:var(--text2);font-weight:400">(for blocking arrows)</span></label>
+      <input type="text" id="proxyInput" placeholder="https://github-proxy.yourname.workers.dev" autocomplete="off" spellcheck="false">
+      <span class="hint">Paste your Worker URL here. Leave blank if running from localhost.</span>
+    </div>
+    <div class="field">
+      <label>Poll interval</label>
+      <select id="pollInput">
+        <option value="15">Every 15 seconds</option>
+        <option value="30" selected>Every 30 seconds</option>
+        <option value="60">Every 60 seconds</option>
+        <option value="0">Manual only</option>
+      </select>
+    </div>
+
+    <div id="setupError"></div>
+    <div class="btn-row">
+      <button class="btn primary" id="connectBtn" onclick="connect()">Connect →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── App ── -->
+<div id="appShell">
+  <header>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+    </svg>
+    <h2 id="repoLabel">— <span>loading…</span></h2>
+    <div class="status-dot loading" id="statusDot"></div>
+    <span id="statusText" style="font-size:12px;color:var(--text2)">Connecting…</span>
+    <button class="btn sm" onclick="refresh()" id="refreshBtn">↻ Refresh</button>
+    <button class="btn sm" onclick="autoLayout()">Auto-layout</button>
+    <button class="btn sm" onclick="disconnect()">Disconnect</button>
+  </header>
+
+  <div class="app-body">
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <input type="text" id="sideSearch" placeholder="Search issues…" oninput="filterSidebar()">
+      </div>
+      <div class="issue-list" id="issueList">
+        <div class="empty-state"><div class="spinner"></div><span>Loading issues…</span></div>
+      </div>
+    </div>
+
+    <div id="mapWrap">
+      <canvas id="mapCanvas"></canvas>
+      <div class="map-controls">
+        <button onclick="zoomIn()" title="Zoom in">+</button>
+        <button onclick="zoomOut()" title="Zoom out">−</button>
+        <button onclick="fitView()" title="Fit all" style="font-size:12px">⊡</button>
+      </div>
+      <div class="legend">
+        <div class="legend-row"><div class="legend-arr"></div> Do this first → then this</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Open</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Closed</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--red-bg);border-color:var(--red)"></div> Blocked</div>
+      </div>
+    </div>
+
+    <div id="detail">
+      <div class="detail-header">
+        <h3 id="detailTitle">—</h3>
+        <button onclick="closeDetail()" title="Close">×</button>
+      </div>
+      <div class="detail-body" id="detailBody"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast">Copied!</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let cfg = {};
+let issues = [];
+let nodePos = {};
+let selectedId = null;
+let pollTimer = null;
+let lastEtag = null;
+let interaction = null;
+let pan = { x: 60, y: 60 }, zoom = 1;
+const DEFAULT_W = 160, DEFAULT_H = 64;
+const HANDLE = 8;
+
+const canvas = document.getElementById('mapCanvas');
+const ctx = canvas.getContext('2d');
+
+// ── CSS var helper (reads computed values for canvas) ──────────────────
+const cssVar = (() => {
+  const cache = {};
+  return (name) => {
+    if (cache[name]) return cache[name];
+    cache[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return cache[name];
+  };
+})();
+
+function clearCssCache() { Object.keys(cssVar).forEach(k => delete cssVar[k]); }
+
+// ── Connect / disconnect ───────────────────────────────────────────────
+async function connect() {
+  const repo = document.getElementById('repoInput').value.trim();
+  const token = document.getElementById('tokenInput').value.trim();
+  const poll = parseInt(document.getElementById('pollInput').value);
+
+  if (!repo || !token) {
+    showSetupError('Please enter a repository and token.');
+    return;
+  }
+  if (!repo.includes('/')) {
+    showSetupError('Repository should be in owner/repo format.');
+    return;
+  }
+
+  setConnectLoading(true);
+  const proxyUrl = document.getElementById('proxyInput').value.trim().replace(/\/+$/, '');
+  cfg = { repo, token, poll, proxyUrl };
+
+  const ok = await fetchIssues(true);
+  if (!ok) { setConnectLoading(false); return; }
+
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('appShell').style.display = 'flex';
+  document.getElementById('repoLabel').innerHTML = repo.split('/')[0] + ' / <span>' + repo.split('/')[1] + '</span>';
+
+  resizeCanvas();
+  autoLayout();
+  startPolling();
+  setConnectLoading(false);
+}
+
+function disconnect() {
+  stopPolling();
+  issues = []; nodePos = {}; selectedId = null;
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+}
+
+function setConnectLoading(on) {
+  const btn = document.getElementById('connectBtn');
+  btn.textContent = on ? 'Connecting…' : 'Connect →';
+  btn.disabled = on;
+}
+
+function showSetupError(msg) {
+  const el = document.getElementById('setupError');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// ── GitHub API ─────────────────────────────────────────────────────────
+async function ghFetch(path, options = {}) {
+  const base = (cfg.proxyUrl) ? cfg.proxyUrl : 'https://api.github.com';
+  const url = path.startsWith('http') ? path : `${base}${path}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(options.headers || {}),
+    },
+  });
+  return res;
+}
+
+async function ghGraphQL(query, variables = {}) {
+  const res = await fetch('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  return res.json();
+}
+
+// Fetch all open+closed issues (paginated), then layer in blocking data
+// Parse issue body text for blocking conventions
+function parseBodyEdges(issue, issueNums, blockingEdges) {
+  const text = (issue.body || '');
+  for (const m of text.matchAll(/\bblocks?:?\s+#(\d+)/gi)) {
+    const t = +m[1]; if (issueNums.has(t)) blockingEdges.add(issue.number + '->' + t);
+  }
+  for (const m of text.matchAll(/\bblocked[\s-]by:?\s+#(\d+)/gi)) {
+    const t = +m[1]; if (issueNums.has(t)) blockingEdges.add(t + '->' + issue.number);
+  }
+  for (const m of text.matchAll(/\bdepends[\s-]on:?\s+#(\d+)/gi)) {
+    const t = +m[1]; if (issueNums.has(t)) blockingEdges.add(t + '->' + issue.number);
+  }
+  for (const m of text.matchAll(/\/issues\/(\d+)/g)) {
+    const lineStart = text.lastIndexOf('\n', m.index);
+    const line = text.slice(lineStart, m.index + m[0].length);
+    const t = +m[1];
+    if (!issueNums.has(t)) continue;
+    if (/blocks?:?/i.test(line)) blockingEdges.add(issue.number + '->' + t);
+    if (/blocked[\s-]by:?/i.test(line)) blockingEdges.add(t + '->' + issue.number);
+    if (/depends[\s-]on:?/i.test(line)) blockingEdges.add(t + '->' + issue.number);
+  }
+}
+
+function buildIssues(rawIssues, blockingEdges) {
+  const issueMap = {};
+  rawIssues.forEach(i => { issueMap[i.number] = i; });
+  const blockedBy = {};
+  rawIssues.forEach(i => { blockedBy[i.number] = []; });
+  for (const edge of blockingEdges) {
+    const parts = edge.split('->');
+    const a = +parts[0], b = +parts[1];
+    if (blockedBy[b] !== undefined) blockedBy[b].push(a);
+  }
+  const inProgressLabels = new Set(['in progress','in-progress','wip','doing','started','in_progress']);
+  issues = rawIssues.map(i => {
+    const labelNodes = Array.isArray(i.labels) ? i.labels : (i.labels?.nodes || []);
+    const labelNames = labelNodes.map(l => l.name.toLowerCase());
+    const assigneeNodes = Array.isArray(i.assignees) ? i.assignees : (i.assignees?.nodes || []);
+    const isBlocked = (blockedBy[i.number] || []).some(n => {
+      const dep = issueMap[n]; return dep && dep.state === 'open';
+    });
+    let status = i.state === 'closed' ? 'closed' : 'open';
+    if (status === 'open' && labelNames.some(l => inProgressLabels.has(l))) status = 'inprogress';
+    if (status === 'open' && isBlocked) status = 'blocked';
+    return {
+      id: i.number, title: i.title, body: i.body || '',
+      status, url: i.url || i.html_url,
+      labels: labelNodes,
+      assignees: assigneeNodes.map(a => typeof a === 'string' ? a : a.login),
+      blockedBy: blockedBy[i.number] || [],
+      blocksOthers: [],
+    };
+  });
+  issues.forEach(iss => {
+    iss.blockedBy.forEach(n => {
+      const dep = issues.find(i => i.id === n);
+      if (dep && !dep.blocksOthers.includes(iss.id)) dep.blocksOthers.push(iss.id);
+    });
+  });
+  const idSet = new Set(issues.map(i => i.id));
+  Object.keys(nodePos).forEach(k => { if (!idSet.has(+k)) delete nodePos[k]; });
+  const src = blockingEdges.size + ' edges';
+  renderSidebar();
+  drawMap();
+  setStatus('ok', issues.length + ' issues · ' + src + ' · ' + new Date().toLocaleTimeString());
+}
+
+// Show a one-time banner explaining the CORS limitation when running from file://
+function showCorsWarning() {
+  const existing = document.getElementById('corsWarning');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'corsWarning';
+  banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999;background:#9a6700;color:#fff8c5;padding:12px 20px;font-size:13px;display:flex;align-items:center;gap:12px;line-height:1.4';
+  banner.innerHTML = `
+    <span style="font-size:18px">&#9888;</span>
+    <span><strong>Running from a local file</strong> — GitHub's dependency API requires an https:// origin.
+    Issues are loading fine, but blocking relationships won\'t appear until you host this page over https://.
+    <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/creating-a-github-pages-site" target="_blank" rel="noopener" style="color:#fff8c5;font-weight:600">Set up GitHub Pages &#8599;</a>
+    &nbsp;&mdash;&nbsp;
+    <a href="#" onclick="document.getElementById(\'corsWarning\').remove();return false" style="color:#fff8c5">Dismiss</a>
+    </span>`;
+  document.body.appendChild(banner);
+}
+
+// Fetch all issues via REST, then get blocking data from Projects v2 + body text
+async function fetchIssues(initial = false) {
+  setStatus('loading', 'Fetching…');
+  try {
+    const [owner, repo] = cfg.repo.split('/');
+
+    // 1. REST: reliable, always works, gets issue bodies
+    let page = 1, all = [];
+    while (true) {
+      const res = await ghFetch(`/repos/${owner}/${repo}/issues?state=all&per_page=100&page=${page}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err.message || `HTTP ${res.status}`;
+        setStatus('error', msg);
+        if (initial) showSetupError('GitHub error: ' + msg);
+        return false;
+      }
+      const data = await res.json();
+      all = all.concat(data.filter(i => !i.pull_request));
+      if (data.length < 100) break;
+      page++;
+    }
+
+    const issueNums = new Set(all.map(i => i.number));
+    const blockingEdges = new Set();
+
+    // 2. Fetch native dependencies via REST API (requires https:// origin — see CORS note)
+    //    When running from file:// the REST /dependencies endpoint is CORS-blocked.
+    //    Host this file on GitHub Pages (or any https:// server) to fix that.
+    const canFetchDeps = cfg.proxyUrl || location.hostname === 'localhost';
+    if (canFetchDeps) {
+      const depResults = await Promise.all(all.map(async issue => {
+        try {
+          const res = await ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies`);
+          if (res.ok) {
+            const deps = await res.json();
+            return { num: issue.number, blockedBy: (Array.isArray(deps) ? deps : []).map(d => d.number) };
+          }
+        } catch(e) {}
+        return { num: issue.number, blockedBy: [] };
+      }));
+      depResults.forEach(({ num, blockedBy }) => {
+        blockedBy.forEach(prereq => {
+          if (issueNums.has(prereq)) blockingEdges.add(prereq + '->' + num);
+        });
+      });
+    } else {
+      // file:// origin — REST /dependencies is CORS-blocked. Show a one-time warning.
+      if (initial) showCorsWarning(); // no proxy set and not localhost
+    }
+
+    // 3. Body text fallback (always runs — catches "blocked by #N" in descriptions)
+    all.forEach(i => parseBodyEdges(i, issueNums, blockingEdges));
+
+    const normalised = all.map(i => ({
+      number: i.number, title: i.title, state: i.state,
+      body: i.body || '', url: i.html_url,
+      labels: i.labels || [], assignees: i.assignees || [],
+    }));
+    buildIssues(normalised, blockingEdges);
+    return true;
+  } catch (e) {
+    console.error('fetchIssues error:', e);
+    setStatus('error', e.message);
+    if (initial) showSetupError('Error: ' + e.message);
+    return false;
+  }
+}
+
+// ── Polling ──────────────────────────────────────────────────────────
+function startPolling() {
+  stopPolling();
+  if (cfg.poll > 0) pollTimer = setInterval(() => fetchIssues(), cfg.poll * 1000);
+}
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+function refresh() { fetchIssues(); }
+
+// ── Status ────────────────────────────────────────────────────────────
+function setStatus(state, text) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot ' + (state === 'ok' ? '' : state);
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────
+function renderSidebar() {
+  const q = document.getElementById('sideSearch')?.value.toLowerCase() || '';
+  const list = document.getElementById('issueList');
+  const filtered = issues.filter(i => !q || i.title.toLowerCase().includes(q) || String(i.id).includes(q));
+  if (!filtered.length) { list.innerHTML = '<div class="empty-state"><span>No issues found</span></div>'; return; }
+  const order = { blocked:0, inprogress:1, open:2, closed:3 };
+  filtered.sort((a,b) => (order[a.status]??4)-(order[b.status]??4) || a.id-b.id);
+  list.innerHTML = filtered.map(i => {
+    const pillLabel = {open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
+    const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(n=>'#'+n).join(', ')}</span>` : '';
+    return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue(${i.id})">
+      <div class="issue-item-header"><span class="issue-num">#${i.id}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
+      <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}</div>
+    </div>`;
+  }).join('');
+}
+function filterSidebar() { renderSidebar(); }
+
+// ── Detail ────────────────────────────────────────────────────────────
+function selectIssue(id) { selectedId=id; renderSidebar(); showDetail(id); drawMap(); }
+
+function showDetail(id) {
+  const iss = issues.find(i=>i.id===id);
+  if (!iss) return;
+  document.getElementById('detail').classList.add('open');
+  document.getElementById('detailTitle').textContent = '#'+iss.id+' '+iss.title;
+  const prereqs = iss.blockedBy.map(n=>{
+    const d=issues.find(i=>i.id===n);
+    return `<div class="dep-item"><span class="dep-arrow">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+  }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
+  const unlocks = iss.blocksOthers.map(n=>{
+    const d=issues.find(i=>i.id===n);
+    return `<div class="dep-item"><span class="dep-arrow" style="color:var(--green)">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+  }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
+  const labels = iss.labels.map(l=>{const c=l.color||'aaa';return `<span class="pill" style="background:#${c}22;color:#${c};border-color:#${c}88">${l.name}</span>`;}).join(' ')||'—';
+  document.getElementById('detailBody').innerHTML = `
+    <div><div class="detail-section-label">Status</div><span class="pill ${iss.status}">${{open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[iss.status]}</span></div>
+    ${iss.assignees.length?`<div><div class="detail-section-label">Assignees</div><div style="font-size:13px">${iss.assignees.join(', ')}</div></div>`:''}
+    <div><div class="detail-section-label">Labels</div><div style="display:flex;gap:4px;flex-wrap:wrap">${labels}</div></div>
+    <div><div class="detail-section-label">Prerequisites</div>${prereqs}</div>
+    <div><div class="detail-section-label">Unlocks</div>${unlocks}</div>
+    <div><a class="detail-link" href="${iss.url}" target="_blank" rel="noopener">Open in GitHub &#8599;</a></div>
+    ${iss.body?`<div><div class="detail-section-label">Description</div><div style="font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;max-height:140px;overflow-y:auto">${iss.body.slice(0,400).replace(/</g,'&lt;')}${iss.body.length>400?'…':''}</div></div>`:''}
+  `;
+}
+function closeDetail() { selectedId=null; document.getElementById('detail').classList.remove('open'); renderSidebar(); drawMap(); }
+
+// ── Layout ────────────────────────────────────────────────────────────
+function topoLayers() {
+  const ids = issues.map(i=>i.id);
+  const placed = new Set(), layers = [];
+  let remaining = [...ids];
+  while (remaining.length) {
+    const layer = remaining.filter(id=>{
+      const iss=issues.find(i=>i.id===id);
+      return (iss.blockedBy||[]).every(dep=>placed.has(dep)||!ids.includes(dep));
+    });
+    if (!layer.length) { layers.push(remaining); break; }
+    layers.push(layer);
+    layer.forEach(id=>placed.add(id));
+    remaining = remaining.filter(id=>!placed.has(id));
+  }
+  return layers;
+}
+
+function autoLayout() {
+  const W=canvas.width||600, H=canvas.height||480;
+  const layers=topoLayers(), numL=layers.length;
+  const colW=Math.max(DEFAULT_W+40,(W-80)/numL);
+  layers.forEach((layer,li)=>{
+    const rowH=Math.max(DEFAULT_H+24,(H-60)/layer.length);
+    layer.forEach((id,ri)=>{
+      const ex=nodePos[id];
+      nodePos[id]={x:24+li*colW, y:24+ri*rowH+(rowH-DEFAULT_H)/2, w:ex?ex.w:DEFAULT_W, h:ex?ex.h:DEFAULT_H};
+    });
+  });
+  pan={x:0,y:0}; zoom=1; drawMap();
+}
+
+function fitView() {
+  const ids=issues.map(i=>i.id).filter(id=>nodePos[id]);
+  if (!ids.length) return;
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  ids.forEach(id=>{const p=nodePos[id];minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x+p.w);maxY=Math.max(maxY,p.y+p.h);});
+  const W=canvas.width,H=canvas.height,pad=48;
+  const scaleX=(W-pad*2)/(maxX-minX||1),scaleY=(H-pad*2)/(maxY-minY||1);
+  zoom=Math.min(Math.max(0.3,Math.min(scaleX,scaleY)),2);
+  pan.x=pad-minX*zoom; pan.y=pad-minY*zoom; drawMap();
+}
+function zoomIn(){zoom=Math.min(3,zoom*1.2);drawMap();}
+function zoomOut(){zoom=Math.max(0.2,zoom/1.2);drawMap();}
+
+// ── Canvas ────────────────────────────────────────────────────────────
+function resizeCanvas(){const wrap=document.getElementById('mapWrap');canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;}
+function w2s(x,y){return{x:x*zoom+pan.x,y:y*zoom+pan.y};}
+function s2w(x,y){return{x:(x-pan.x)/zoom,y:(y-pan.y)/zoom};}
+
+function getHitZone(sx,sy){
+  for(const iss of [...issues].reverse()){
+    const p=nodePos[iss.id];if(!p)continue;
+    const s=w2s(p.x,p.y),sw=p.w*zoom,sh=p.h*zoom;
+    const rx=sx-s.x,ry=sy-s.y;
+    if(rx<-HANDLE||ry<-HANDLE||rx>sw+HANDLE||ry>sh+HANDLE)continue;
+    const onR=rx>=sw-HANDLE&&rx<=sw+HANDLE,onB=ry>=sh-HANDLE&&ry<=sh+HANDLE;
+    const onL=rx>=-HANDLE&&rx<=HANDLE,onT=ry>=-HANDLE&&ry<=HANDLE;
+    if(onR&&onB)return{id:iss.id,zone:'resize-br'};
+    if(onR&&onT)return{id:iss.id,zone:'resize-tr'};
+    if(onL&&onB)return{id:iss.id,zone:'resize-bl'};
+    if(onL&&onT)return{id:iss.id,zone:'resize-tl'};
+    if(onR)return{id:iss.id,zone:'resize-r'};
+    if(onB)return{id:iss.id,zone:'resize-b'};
+    if(rx>=0&&rx<=sw&&ry>=0&&ry<=sh)return{id:iss.id,zone:'drag'};
+  }
+  return{id:null,zone:'pan'};
+}
+const CURSORS={drag:'grab','resize-r':'ew-resize','resize-b':'ns-resize','resize-br':'nwse-resize','resize-tr':'nesw-resize','resize-bl':'nesw-resize','resize-tl':'nwse-resize',pan:'default'};
+
+canvas.addEventListener('mousemove',e=>{
+  const rect=canvas.getBoundingClientRect(),sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+  if(!interaction){canvas.style.cursor=CURSORS[getHitZone(sx,sy).zone]||'default';return;}
+  const dx=sx-interaction.startSx,dy=sy-interaction.startSy,dxw=dx/zoom,dyw=dy/zoom;
+  const p=nodePos[interaction.id],z=interaction.zone;
+  if(z==='drag'){p.x=interaction.ox+dxw;p.y=interaction.oy+dyw;}
+  else if(z==='resize-r'){p.w=Math.max(100,interaction.ow+dxw);}
+  else if(z==='resize-b'){p.h=Math.max(44,interaction.oh+dyw);}
+  else if(z==='resize-br'){p.w=Math.max(100,interaction.ow+dxw);p.h=Math.max(44,interaction.oh+dyw);}
+  else if(z==='resize-tr'){p.w=Math.max(100,interaction.ow+dxw);p.h=Math.max(44,interaction.oh-dyw);p.y=interaction.oy+dyw;}
+  else if(z==='resize-bl'){p.w=Math.max(100,interaction.ow-dxw);p.h=Math.max(44,interaction.oh+dyw);p.x=interaction.ox+dxw;}
+  else if(z==='resize-tl'){p.w=Math.max(100,interaction.ow-dxw);p.h=Math.max(44,interaction.oh-dyw);p.x=interaction.ox+dxw;p.y=interaction.oy+dyw;}
+  else if(z==='pan'){pan.x=interaction.px+dx;pan.y=interaction.py+dy;}
+  drawMap();
+});
+canvas.addEventListener('mousedown',e=>{
+  const rect=canvas.getBoundingClientRect(),sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+  const hit=getHitZone(sx,sy);
+  if(hit.id){const p=nodePos[hit.id];interaction={id:hit.id,zone:hit.zone,startSx:sx,startSy:sy,ox:p.x,oy:p.y,ow:p.w,oh:p.h};canvas.style.cursor=hit.zone==='drag'?'grabbing':CURSORS[hit.zone];}
+  else{interaction={id:null,zone:'pan',startSx:sx,startSy:sy,px:pan.x,py:pan.y};canvas.style.cursor='grabbing';}
+});
+canvas.addEventListener('mouseup',e=>{
+  if(interaction?.id&&interaction.zone==='drag'){
+    const rect=canvas.getBoundingClientRect();
+    if(Math.abs(e.clientX-rect.left-interaction.startSx)<5&&Math.abs(e.clientY-rect.top-interaction.startSy)<5)selectIssue(interaction.id);
+  }
+  interaction=null;canvas.style.cursor='default';
+});
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const rect=canvas.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top;
+  const f=e.deltaY<0?1.1:0.91,nz=Math.max(0.2,Math.min(3,zoom*f));
+  pan.x=mx-(mx-pan.x)*(nz/zoom);pan.y=my-(my-pan.y)*(nz/zoom);zoom=nz;drawMap();
+},{passive:false});
+window.addEventListener('resize',()=>{resizeCanvas();drawMap();});
+
+// ── Draw ──────────────────────────────────────────────────────────────
+function getColor(status){
+  const dark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const m={
+    open:      dark?{fill:'#0d2b0f',stroke:'#3fb950',text:'#3fb950'}:{fill:'#dafbe1',stroke:'#1a7f37',text:'#1a7f37'},
+    inprogress:dark?{fill:'#2b1f00',stroke:'#d29922',text:'#d29922'}:{fill:'#fff8c5',stroke:'#9a6700',text:'#9a6700'},
+    closed:    dark?{fill:'#21262d',stroke:'#484f58',text:'#8d96a0'}:{fill:'#f6f8fa',stroke:'#d0d7de',text:'#656d76'},
+    blocked:   dark?{fill:'#2d0f0f',stroke:'#f85149',text:'#f85149'}:{fill:'#ffebe9',stroke:'#cf222e',text:'#cf222e'},
+  };
+  return m[status]||m.open;
+}
+function drawRR(x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();
+}
+function edgePt(cx,cy,hw,hh,udx,udy){
+  const tx=Math.abs(udx)>0.001?hw/Math.abs(udx):Infinity;
+  const ty=Math.abs(udy)>0.001?hh/Math.abs(udy):Infinity;
+  const t=Math.min(tx,ty);
+  return{x:cx+udx*t,y:cy+udy*t};
+}
+function drawMap(){
+  const W=canvas.width,H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  const dark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const arrowColor=dark?'#58a6ff':'#0969da';
+  // Edges — arrow from prereq TO dependent
+  issues.forEach(iss=>{
+    (iss.blockedBy||[]).forEach(prereqId=>{
+      const prereq=nodePos[prereqId],dep=nodePos[iss.id];
+      if(!prereq||!dep)return;
+      const acx=prereq.x+prereq.w/2,acy=prereq.y+prereq.h/2;
+      const bcx=dep.x+dep.w/2,bcy=dep.y+dep.h/2;
+      const as=w2s(acx,acy),bs=w2s(bcx,bcy);
+      const dx=bs.x-as.x,dy=bs.y-as.y,len=Math.sqrt(dx*dx+dy*dy);
+      if(len<4)return;
+      const udx=dx/len,udy=dy/len;
+      const sp=edgePt(acx,acy,prereq.w/2,prereq.h/2,udx,udy),sps=w2s(sp.x,sp.y);
+      const ep=edgePt(bcx,bcy,dep.w/2,dep.h/2,-udx,-udy),eps=w2s(ep.x,ep.y);
+      ctx.save();ctx.strokeStyle=arrowColor;ctx.lineWidth=1.5*zoom;
+      ctx.beginPath();ctx.moveTo(sps.x,sps.y);ctx.lineTo(eps.x,eps.y);ctx.stroke();
+      const h=9*zoom;
+      ctx.beginPath();ctx.moveTo(eps.x-udx*h+udy*h*0.4,eps.y-udy*h-udx*h*0.4);ctx.lineTo(eps.x,eps.y);ctx.lineTo(eps.x-udx*h-udy*h*0.4,eps.y-udy*h+udx*h*0.4);ctx.stroke();
+      ctx.restore();
+    });
+  });
+  // Nodes
+  issues.forEach(iss=>{
+    const p=nodePos[iss.id];if(!p)return;
+    const s=w2s(p.x,p.y),sw=p.w*zoom,sh=p.h*zoom;
+    const col=getColor(iss.status),isSel=selectedId===iss.id;
+    ctx.save();
+    drawRR(s.x,s.y,sw,sh,6*zoom);ctx.fillStyle=col.fill;ctx.fill();
+    ctx.strokeStyle=isSel?arrowColor:col.stroke;ctx.lineWidth=isSel?2.5*zoom:1*zoom;ctx.stroke();
+    const cx=s.x+sw/2,cy=s.y+sh/2;
+    const idFs=Math.max(9,10*zoom),titleFs=Math.max(10,12*zoom);
+    ctx.fillStyle=col.text;ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.font='500 '+idFs+'px -apple-system,sans-serif';ctx.fillText('#'+iss.id,cx,cy-titleFs*0.8);
+    ctx.font='500 '+titleFs+'px -apple-system,sans-serif';
+    const maxW=sw-14*zoom;let title=iss.title;
+    while(title.length>3&&ctx.measureText(title).width>maxW)title=title.slice(0,-1);
+    if(title!==iss.title)title=title.slice(0,-1)+'…';
+    ctx.fillText(title,cx,cy+titleFs*0.8);
+    const hsz=HANDLE*zoom*0.8;ctx.fillStyle=isSel?arrowColor:col.stroke;ctx.globalAlpha=0.4;
+    [[s.x+sw-hsz,s.y+sh-hsz],[s.x+sw-hsz,s.y],[s.x,s.y+sh-hsz],[s.x,s.y]].forEach(([hx,hy])=>ctx.fillRect(hx,hy,hsz,hsz));
+    [s.x+sw-hsz,s.x].forEach(hx=>ctx.fillRect(hx,s.y+sh/2-hsz/3,hsz,hsz*0.6));
+    [s.y+sh-hsz,s.y].forEach(hy=>ctx.fillRect(s.x+sw/2-hsz/3,hy,hsz*0.6,hsz));
+    ctx.globalAlpha=1;ctx.restore();
+  });
+}
+
+function showToast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2000);}
+</script>
+</body>
+</html>
