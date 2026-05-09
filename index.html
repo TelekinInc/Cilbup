@@ -653,7 +653,7 @@ async function fetchIssues(initial = false) {
     if (canFetchDeps) {
       const depResults = await Promise.all(all.map(async issue => {
         try {
-          const res = await ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies`);
+          const res = await ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies/blocked_by`);
           if (res.ok) {
             const deps = await res.json();
             return { num: issue.number, blockedBy: (Array.isArray(deps) ? deps : []).map(d => d.number) };
