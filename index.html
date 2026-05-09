@@ -151,8 +151,9 @@
     font-weight: 500;
     border: 1px solid transparent;
   }
-  .pill.open { background: var(--green-bg); color: var(--green); border-color: var(--green); }
-  .pill.closed { background: var(--bg3); color: var(--text2); border-color: var(--border); }
+  .pill.todo { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+  .pill.done { background: var(--purple-bg); color: var(--purple); border-color: var(--purple); }
+  .pill.binned { background: var(--bg3); color: var(--text2); border-color: var(--border); }
   .pill.blocked { background: var(--red-bg); color: var(--red); border-color: var(--red); }
   .pill.inprogress { background: var(--orange-bg); color: var(--orange); border-color: var(--orange); }
 
@@ -404,7 +405,8 @@
   <div class="app-body">
     <div id="sidebar">
       <div class="sidebar-header">
-        <input type="text" id="sideSearch" placeholder="Search issues…" oninput="filterSidebar()">
+        <input type="text" id="sideSearch" placeholder="Search issues…" oninput="renderSidebar()">
+        <button class="btn sm" id="sortBtn" onclick="cycleSortSidebar()" title="Sort order">#&nbsp;↓</button>
       </div>
       <div class="issue-list" id="issueList">
         <div class="empty-state"><div class="spinner"></div><span>Loading issues…</span></div>
@@ -429,10 +431,11 @@
           <svg width="32" height="10" viewBox="0 0 32 10" fill="none" xmlns="http://www.w3.org/2000/svg"><line x1="0" y1="5" x2="26" y2="5" stroke="var(--blue)" stroke-width="1.5"/><polygon points="26,1 32,5 26,9" fill="var(--blue)"/></svg>
           <span style="color:var(--blue)">Parent</span>
         </div>
-        <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Open</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
-        <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Closed</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--red-bg);border-color:var(--red)"></div> Blocked</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Todo</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--purple-bg);border-color:var(--purple)"></div> Done</div>
+        <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Binned</div>
         <div class="legend-row" style="color:var(--text3);font-size:10px">Double-click node to open in GitHub</div>
       </div>
     </div>
@@ -458,6 +461,7 @@ let selectedId = null;
 let pollTimer = null;
 let lastEtag = null;
 let interaction = null;
+let sidebarSort = { key: 'id', dir: 1 }; // key: 'id'|'date', dir: 1=asc,-1=desc
 let pan = { x: 60, y: 60 }, zoom = 1;
 const DEFAULT_W = 160, DEFAULT_H = 64;
 const HANDLE = 8;
@@ -600,11 +604,21 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
     const isBlocked = (blockedBy[i.number] || []).some(n => {
       const dep = issueMap[n]; return dep && dep.state === 'open';
     });
-    let status = i.state === 'closed' ? 'closed' : 'open';
-    // Project status takes priority over labels
     const ps = (i.projectStatus || '').toLowerCase();
-    if (status === 'open' && (inProgressProjectStatuses.has(ps) || labelNames.some(l => inProgressLabels.has(l)))) status = 'inprogress';
-    if (status === 'open' && isBlocked) status = 'blocked';
+    // Start from GitHub state, then refine via project status
+    let status = 'todo';
+    if (i.state === 'closed') {
+      // Closed issues: check project status for Done vs Binned
+      if (/bin|cancel|drop|won.?t.?do|wont|discard|archive/i.test(ps)) status = 'binned';
+      else status = 'done';
+    } else {
+      // Open issues
+      if (inProgressProjectStatuses.has(ps) || labelNames.some(l => inProgressLabels.has(l))) status = 'inprogress';
+      else if (/^done$|complete|finish/i.test(ps)) status = 'done';
+      else if (/bin|cancel|drop|won.?t.?do/i.test(ps)) status = 'binned';
+      else status = 'todo';
+    }
+    if ((status === 'todo' || status === 'inprogress') && isBlocked) status = 'blocked';
     // parents: issues this one is a child of
     const parents = [...parentEdges]
       .filter(e => e.startsWith(i.number + '->'))
@@ -851,17 +865,55 @@ function setStatus(state, text) {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────
+function fmtDate(iso) {
+  // iso = 'YYYY-MM-DD' → ''YY/MM/DD'
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return '\u2019' + y.slice(2) + '/' + m + '/' + d;
+}
+
+function dateColour(iso) {
+  if (!iso) return 'var(--text2)';
+  const now = new Date(); now.setHours(0,0,0,0);
+  const target = new Date(iso);
+  const diff = (target - now) / 86400000; // days
+  if (diff < 0)  return 'var(--red)';
+  if (diff <= 7) return 'var(--orange)';
+  return 'var(--text2)';
+}
+
+function cycleSortSidebar() {
+  // Cycle: id↓ → id↑ → date↓ → date↑ → id↓
+  const states = [
+    { key:'id',   dir: 1,  label:'# ↓' },
+    { key:'id',   dir:-1,  label:'# ↑' },
+    { key:'date', dir: 1,  label:'○ ↓' },
+    { key:'date', dir:-1,  label:'○ ↑' },
+  ];
+  const cur = states.findIndex(s => s.key === sidebarSort.key && s.dir === sidebarSort.dir);
+  const next = states[(cur + 1) % states.length];
+  sidebarSort = { key: next.key, dir: next.dir };
+  document.getElementById('sortBtn').textContent = next.label;
+  renderSidebar();
+}
+
 function renderSidebar() {
   const q = document.getElementById('sideSearch')?.value.toLowerCase() || '';
   const list = document.getElementById('issueList');
   const filtered = issues.filter(i => !q || i.title.toLowerCase().includes(q) || String(i.id).includes(q));
   if (!filtered.length) { list.innerHTML = '<div class="empty-state"><span>No issues found</span></div>'; return; }
-  const order = { blocked:0, inprogress:1, open:2, closed:3 };
-  filtered.sort((a,b) => (order[a.status]??4)-(order[b.status]??4) || a.id-b.id);
+  const order = { blocked:0, todo:1, inprogress:2, done:3, binned:4 };
+  filtered.sort((a,b) => {
+    if (sidebarSort.key === 'date') {
+      const da = a.targetDate || '9999', db = b.targetDate || '9999';
+      return da < db ? -sidebarSort.dir : da > db ? sidebarSort.dir : 0;
+    }
+    return (a.id - b.id) * sidebarSort.dir;
+  });
   list.innerHTML = filtered.map(i => {
-    const pillLabel = {open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
+    const pillLabel = {todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
     const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(n=>'#'+n).join(', ')}</span>` : '';
-    const dateStr = i.targetDate ? `<span style="font-size:11px;color:var(--text2);margin-left:4px">⊙ ${i.targetDate}</span>` : '';
+    const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">⊙ ${fmtDate(i.targetDate)}</span>` : '';
     return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue(${i.id})">
       <div class="issue-item-header"><span class="issue-num">#${i.id}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
       <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}${dateStr}</div>
@@ -895,8 +947,8 @@ function showDetail(id) {
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const labels = iss.labels.map(l=>{const c=l.color||'aaa';return `<span class="pill" style="background:#${c}22;color:#${c};border-color:#${c}88">${l.name}</span>`;}).join(' ')||'—';
   document.getElementById('detailBody').innerHTML = `
-    <div><div class="detail-section-label">Status</div><span class="pill ${iss.status}">${{open:'Open',closed:'Closed',inprogress:'In progress',blocked:'Blocked'}[iss.status]}${iss.projectStatus?' ('+iss.projectStatus+')':''}</span></div>
-    ${iss.targetDate?`<div><div class="detail-section-label">Target date</div><div style="font-size:13px">${iss.targetDate}</div></div>`:''}
+    <div><div class="detail-section-label">Status</div><span class="pill ${iss.status}">${{todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[iss.status]}${iss.projectStatus?' ('+iss.projectStatus+')':''}</span></div>
+    ${iss.targetDate?`<div><div class="detail-section-label">Target date</div><div style="font-size:13px;color:${(iss.status==='done'||iss.status==='binned')?'var(--text2)':dateColour(iss.targetDate)}">${fmtDate(iss.targetDate)}</div></div>`:''}
     ${iss.assignees.length?`<div><div class="detail-section-label">Assignees</div><div style="font-size:13px">${iss.assignees.join(', ')}</div></div>`:''}
     <div><div class="detail-section-label">Labels</div><div style="display:flex;gap:4px;flex-wrap:wrap">${labels}</div></div>
     <div><div class="detail-section-label">Blocked by</div>${prereqs}</div>
@@ -1037,12 +1089,13 @@ window.addEventListener('resize',()=>{resizeCanvas();drawMap();});
 function getColor(status){
   const dark=window.matchMedia('(prefers-color-scheme: dark)').matches;
   const m={
-    open:      dark?{fill:'#0d2b0f',stroke:'#3fb950',text:'#3fb950'}:{fill:'#dafbe1',stroke:'#1a7f37',text:'#1a7f37'},
+    todo:      dark?{fill:'#0d2b0f',stroke:'#3fb950',text:'#3fb950'}:{fill:'#dafbe1',stroke:'#1a7f37',text:'#1a7f37'},
     inprogress:dark?{fill:'#2b1f00',stroke:'#d29922',text:'#d29922'}:{fill:'#fff8c5',stroke:'#9a6700',text:'#9a6700'},
-    closed:    dark?{fill:'#21262d',stroke:'#484f58',text:'#8d96a0'}:{fill:'#f6f8fa',stroke:'#d0d7de',text:'#656d76'},
+    done:      dark?{fill:'#1c0e3f',stroke:'#bc8cff',text:'#bc8cff'}:{fill:'#fbefff',stroke:'#6639ba',text:'#6639ba'},
+    binned:    dark?{fill:'#21262d',stroke:'#484f58',text:'#8d96a0'}:{fill:'#f6f8fa',stroke:'#d0d7de',text:'#656d76'},
     blocked:   dark?{fill:'#2d0f0f',stroke:'#f85149',text:'#f85149'}:{fill:'#ffebe9',stroke:'#cf222e',text:'#cf222e'},
   };
-  return m[status]||m.open;
+  return m[status]||m.todo;
 }
 function drawRR(x,y,w,h,r){
   ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);
