@@ -788,8 +788,8 @@ function showDetail(id) {
     <div><div class="detail-section-label">Labels</div><div style="display:flex;gap:4px;flex-wrap:wrap">${labels}</div></div>
     <div><div class="detail-section-label">Blocked by</div>${prereqs}</div>
     <div><div class="detail-section-label">Blocks</div>${unlocks}</div>
-    <div><div class="detail-section-label">Parent</div>${parents}</div>
     <div><div class="detail-section-label">Children</div>${children}</div>
+    <div><div class="detail-section-label">Parent</div>${parents}</div>
     <div><a class="detail-link" href="${iss.url}" target="_blank" rel="noopener">Open in GitHub &#8599;</a></div>
     ${iss.body?`<div><div class="detail-section-label">Description</div><div style="font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;max-height:140px;overflow-y:auto">${iss.body.slice(0,400).replace(/</g,'&lt;')}${iss.body.length>400?'…':''}</div></div>`:''}
   `;
@@ -865,11 +865,13 @@ function getHitZone(sx,sy){
     if(onL&&onT)return{id:iss.id,zone:'resize-tl'};
     if(onR)return{id:iss.id,zone:'resize-r'};
     if(onB)return{id:iss.id,zone:'resize-b'};
+    if(onL)return{id:iss.id,zone:'resize-l'};
+    if(onT)return{id:iss.id,zone:'resize-t'};
     if(rx>=0&&rx<=sw&&ry>=0&&ry<=sh)return{id:iss.id,zone:'drag'};
   }
   return{id:null,zone:'pan'};
 }
-const CURSORS={drag:'grab','resize-r':'ew-resize','resize-b':'ns-resize','resize-br':'nwse-resize','resize-tr':'nesw-resize','resize-bl':'nesw-resize','resize-tl':'nwse-resize',pan:'default'};
+const CURSORS={drag:'grab','resize-r':'ew-resize','resize-b':'ns-resize','resize-l':'ew-resize','resize-t':'ns-resize','resize-br':'nwse-resize','resize-tr':'nesw-resize','resize-bl':'nesw-resize','resize-tl':'nwse-resize',pan:'default'};
 
 canvas.addEventListener('mousemove',e=>{
   const rect=canvas.getBoundingClientRect(),sx=e.clientX-rect.left,sy=e.clientY-rect.top;
@@ -879,6 +881,8 @@ canvas.addEventListener('mousemove',e=>{
   if(z==='drag'){p.x=interaction.ox+dxw;p.y=interaction.oy+dyw;}
   else if(z==='resize-r'){p.w=Math.max(100,interaction.ow+dxw);}
   else if(z==='resize-b'){p.h=Math.max(44,interaction.oh+dyw);}
+  else if(z==='resize-l'){const nw=Math.max(100,interaction.ow-dxw);p.x=interaction.ox+(interaction.ow-nw);p.w=nw;}
+  else if(z==='resize-t'){const nh=Math.max(44,interaction.oh-dyw);p.y=interaction.oy+(interaction.oh-nh);p.h=nh;}
   else if(z==='resize-br'){p.w=Math.max(100,interaction.ow+dxw);p.h=Math.max(44,interaction.oh+dyw);}
   else if(z==='resize-tr'){p.w=Math.max(100,interaction.ow+dxw);p.h=Math.max(44,interaction.oh-dyw);p.y=interaction.oy+dyw;}
   else if(z==='resize-bl'){p.w=Math.max(100,interaction.ow-dxw);p.h=Math.max(44,interaction.oh+dyw);p.x=interaction.ox+dxw;}
@@ -987,11 +991,7 @@ function drawMap(){
     while(title.length>3&&ctx.measureText(title).width>maxW)title=title.slice(0,-1);
     if(title!==iss.title)title=title.slice(0,-1)+'…';
     ctx.fillText(title,cx,cy+titleFs*0.8);
-    const hsz=HANDLE*zoom*0.8;ctx.fillStyle=isSel?BLUE:col.stroke;ctx.globalAlpha=0.4;
-    [[s.x+sw-hsz,s.y+sh-hsz],[s.x+sw-hsz,s.y],[s.x,s.y+sh-hsz],[s.x,s.y]].forEach(([hx,hy])=>ctx.fillRect(hx,hy,hsz,hsz));
-    [s.x+sw-hsz,s.x].forEach(hx=>ctx.fillRect(hx,s.y+sh/2-hsz/3,hsz,hsz*0.6));
-    [s.y+sh-hsz,s.y].forEach(hy=>ctx.fillRect(s.x+sw/2-hsz/3,hy,hsz*0.6,hsz));
-    ctx.globalAlpha=1;ctx.restore();
+    ctx.restore();
   });
 }
 
