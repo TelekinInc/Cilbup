@@ -347,11 +347,16 @@
       </svg>
       GitHub Dependency Map
     </h1>
-    <p>Visualises your GitHub Issues' blocking relationships as a live dependency map. Refreshes automatically.<br><strong>Note:</strong> host on GitHub Pages or any https:// server for blocking arrows — the GitHub dependency API is CORS-blocked from local files. Issues load fine either way.</p>
+    <p>Visualises GitHub Issues across all repos in a project as a live dependency map. Refreshes automatically.<br><strong>Note:</strong> blocking arrows require the Cloudflare proxy — the GitHub dependency API is CORS-blocked from browsers.</p>
 
     <div class="field">
-      <label>Repository <span style="color:var(--text2);font-weight:400">(owner/repo)</span></label>
-      <input type="text" id="repoInput" placeholder="e.g. facebook/react" autocomplete="off" spellcheck="false">
+      <label>Organisation or user</label>
+      <input type="text" id="ownerInput" placeholder="e.g. TelekinInc" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Project number</label>
+      <input type="number" id="projectInput" placeholder="e.g. 1" min="1">
+      <span class="hint">From your project URL: github.com/orgs/…/projects/<strong>N</strong></span>
     </div>
     <div class="field">
       <label>Personal access token</label>
@@ -362,14 +367,13 @@
       </span>
     </div>
     <div class="field">
-      <label>Project number <span style="color:var(--text2);font-weight:400">(for Status &amp; target date)</span></label>
-      <input type="number" id="projectInput" placeholder="e.g. 1" min="1">
-      <span class="hint">Your project URL: github.com/orgs/…/projects/<strong>N</strong> — needs <code>read:project</code> scope</span>
-    </div>
-    <div class="field">
       <label>Cloudflare proxy URL <span style="color:var(--text2);font-weight:400">(for blocking arrows)</span></label>
       <input type="text" id="proxyInput" placeholder="https://github-proxy.yourname.workers.dev" autocomplete="off" spellcheck="false">
-      <span class="hint">Paste your Worker URL here. Leave blank if running from localhost.</span>
+      <span class="hint">Paste your Worker URL here.</span>
+    </div>
+    <div class="field">
+      <label>Single repo fallback <span style="color:var(--text2);font-weight:400">(optional — if no project number)</span></label>
+      <input type="text" id="repoInput" placeholder="e.g. TelekinInc/Admin" autocomplete="off" spellcheck="false">
     </div>
     <div class="field">
       <label>Poll interval</label>
@@ -484,33 +488,30 @@ function clearCssCache() { Object.keys(cssVar).forEach(k => delete cssVar[k]); }
 
 // ── Connect / disconnect ───────────────────────────────────────────────
 async function connect() {
-  const repo = document.getElementById('repoInput').value.trim();
-  const token = document.getElementById('tokenInput').value.trim();
-  const poll = parseInt(document.getElementById('pollInput').value);
-
-  if (!repo || !token) {
-    showSetupError('Please enter a repository and token.');
-    return;
-  }
-  if (!repo.includes('/')) {
-    showSetupError('Repository should be in owner/repo format.');
-    return;
-  }
-
-  setConnectLoading(true);
-  const proxyUrl = document.getElementById('proxyInput').value.trim().replace(/\/+$/, '');
+  const owner     = document.getElementById('ownerInput').value.trim();
+  const token     = document.getElementById('tokenInput').value.trim();
   const projectNum = parseInt(document.getElementById('projectInput').value) || null;
-  cfg = { repo, token, poll, proxyUrl, projectNum };
+  const proxyUrl  = document.getElementById('proxyInput').value.trim().replace(/\/+$/, '');
+  const repo      = document.getElementById('repoInput').value.trim();
+  const poll      = parseInt(document.getElementById('pollInput').value);
+
+  if (!token) { showSetupError('Please enter a personal access token.'); return; }
+  if (!projectNum && !repo) { showSetupError('Enter a project number or a fallback repo.'); return; }
+  if (!owner && !repo.includes('/')) { showSetupError('Enter an organisation/user name.'); return; }
+
+  const effectiveOwner = owner || repo.split('/')[0];
+  setConnectLoading(true);
+  cfg = { owner: effectiveOwner, repo, token, poll, proxyUrl, projectNum };
 
   const ok = await fetchIssues(true);
   if (!ok) { setConnectLoading(false); return; }
 
   document.getElementById('setup').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
-  document.getElementById('repoLabel').innerHTML = repo.split('/')[0] + ' / <span>' + repo.split('/')[1] + '</span>';
+  const label = projectNum ? effectiveOwner + ' / <span>Project ' + projectNum + '</span>' : repo.split('/')[0] + ' / <span>' + repo.split('/')[1] + '</span>';
+  document.getElementById('repoLabel').innerHTML = label;
 
   resizeCanvas();
-  // Load saved layout first; smartLayout runs inside buildIssues if no positions exist
   loadLayout();
   startPolling();
   setConnectLoading(false);
@@ -588,13 +589,14 @@ function parseBodyEdges(issue, issueNums, blockingEdges) {
 }
 
 function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
+  // uid is the stable key (repo#number in multi-repo mode, number string in single-repo)
   const issueMap = {};
-  rawIssues.forEach(i => { issueMap[i.number] = i; });
+  rawIssues.forEach(i => { issueMap[i.uid] = i; });
   const blockedBy = {};
-  rawIssues.forEach(i => { blockedBy[i.number] = []; });
+  rawIssues.forEach(i => { blockedBy[i.uid] = []; });
   for (const edge of blockingEdges) {
-    const parts = edge.split('->');
-    const a = +parts[0], b = +parts[1];
+    const sep = edge.indexOf('->');
+    const a = edge.slice(0, sep), b = edge.slice(sep + 2);
     if (blockedBy[b] !== undefined) blockedBy[b].push(a);
   }
   const inProgressLabels = new Set(['in progress','in-progress','wip','doing','started','in_progress']);
@@ -603,35 +605,35 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
     const labelNodes = Array.isArray(i.labels) ? i.labels : (i.labels?.nodes || []);
     const labelNames = labelNodes.map(l => l.name.toLowerCase());
     const assigneeNodes = Array.isArray(i.assignees) ? i.assignees : (i.assignees?.nodes || []);
-    const isBlocked = (blockedBy[i.number] || []).some(n => {
-      const dep = issueMap[n]; return dep && dep.state === 'open';
+    const isBlocked = (blockedBy[i.uid] || []).some(uid => {
+      const dep = issueMap[uid]; return dep && dep.state === 'open';
     });
     const ps = (i.projectStatus || '').toLowerCase();
-    // Start from GitHub state, then refine via project status
     let status = 'todo';
     if (i.state === 'closed') {
-      // Closed issues: check project status for Done vs Binned
       if (/bin|cancel|drop|won.?t.?do|wont|discard|archive/i.test(ps)) status = 'binned';
       else status = 'done';
     } else {
-      // Open issues
       if (inProgressProjectStatuses.has(ps) || labelNames.some(l => inProgressLabels.has(l))) status = 'inprogress';
       else if (/^done$|complete|finish/i.test(ps)) status = 'done';
       else if (/bin|cancel|drop|won.?t.?do/i.test(ps)) status = 'binned';
       else status = 'todo';
     }
     if ((status === 'todo' || status === 'inprogress') && isBlocked) status = 'blocked';
-    // parents: issues this one is a child of
     const parents = [...parentEdges]
-      .filter(e => e.startsWith(i.number + '->'))
-      .map(e => +e.split('->')[1])
-      .filter(n => !!issueMap[n]);
+      .filter(e => e.startsWith(i.uid + '->'))
+      .map(e => e.slice(i.uid.length + 2))
+      .filter(uid => !!issueMap[uid]);
+    // Short display label: just #N, or repo#N if multi-repo
+    const repos = new Set(rawIssues.map(r => r.repo));
+    const shortId = repos.size > 1 ? i.repo.split('/')[1] + '#' + i.number : '#' + i.number;
     return {
-      id: i.number, title: i.title, body: i.body || '',
-      status, url: i.url || i.html_url,
+      id: i.uid, title: i.title, body: i.body || '',
+      shortId, repo: i.repo, number: i.number,
+      status, url: i.url,
       labels: labelNodes,
       assignees: assigneeNodes.map(a => typeof a === 'string' ? a : a.login),
-      blockedBy: blockedBy[i.number] || [],
+      blockedBy: blockedBy[i.uid] || [],
       blocksOthers: [],
       parents,
       targetDate: i.targetDate || null,
@@ -639,13 +641,13 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
     };
   });
   issues.forEach(iss => {
-    iss.blockedBy.forEach(n => {
-      const dep = issues.find(i => i.id === n);
+    iss.blockedBy.forEach(uid => {
+      const dep = issues.find(i => i.id === uid);
       if (dep && !dep.blocksOthers.includes(iss.id)) dep.blocksOthers.push(iss.id);
     });
   });
   const idSet = new Set(issues.map(i => i.id));
-  Object.keys(nodePos).forEach(k => { if (!idSet.has(+k)) delete nodePos[k]; });
+  Object.keys(nodePos).forEach(k => { if (!idSet.has(k)) delete nodePos[k]; });
 
   // Place any issues that don't yet have a position (new arrivals since last load)
   const newIds = issues.filter(i => !nodePos[i.id]).map(i => i.id);
@@ -701,30 +703,127 @@ function showCorsWarning() {
   document.body.appendChild(banner);
 }
 
-// Fetch project Status and target date for all issues via GraphQL
-async function fetchProjectMeta(owner, projectNum, out) {
-  // Try organization first, then fall back to user
+// ── Issue fetching ────────────────────────────────────────────────────
+// Project-primary: fetches all issues across all repos in the project via GraphQL.
+// Falls back to single-repo REST if no project number is configured.
+async function fetchIssues(initial = false) {
+  setStatus('loading', 'Fetching…');
+  try {
+    let all = []; // normalised issue objects
+
+    if (cfg.projectNum) {
+      // ── Project-primary path ──────────────────────────────────────
+      const ok = await fetchAllProjectIssues(all);
+      if (!ok) { if (initial) showSetupError('Could not load project issues.'); return false; }
+    } else {
+      // ── Single-repo fallback ──────────────────────────────────────
+      const [owner, repo] = cfg.repo.split('/');
+      let page = 1;
+      while (true) {
+        const res = await ghFetch(`/repos/${owner}/${repo}/issues?state=all&per_page=100&page=${page}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const msg = err.message || `HTTP ${res.status}`;
+          setStatus('error', msg); if (initial) showSetupError('GitHub error: ' + msg); return false;
+        }
+        const data = await res.json();
+        data.filter(i => !i.pull_request).forEach(i => all.push({
+          uid: i.number + '', // unique key — just number in single-repo mode
+          number: i.number, repo: cfg.repo, title: i.title, state: i.state,
+          body: i.body || '', url: i.html_url,
+          labels: i.labels || [], assignees: i.assignees || [],
+          projectStatus: null, targetDate: null,
+        }));
+        if (data.length < 100) break;
+        page++;
+      }
+    }
+
+    // Build lookup by uid
+    const byUid = {};
+    all.forEach(i => { byUid[i.uid] = i; });
+    const uidSet = new Set(Object.keys(byUid));
+
+    const blockingEdges = new Set(); // "uidA->uidB"
+    const parentEdges   = new Set(); // "childUid->parentUid"
+
+    // ── Fetch blocking + sub-issues per issue via proxy ───────────
+    const canFetchDeps = cfg.proxyUrl || location.hostname === 'localhost';
+    if (canFetchDeps) {
+      await Promise.all(all.map(async issue => {
+        const [iOwner, iRepo] = issue.repo.split('/');
+        try {
+          const [dRes, cRes] = await Promise.all([
+            ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/dependencies/blocked_by`),
+            ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/sub_issues`),
+          ]);
+          if (dRes.ok) {
+            const deps = await dRes.json();
+            (Array.isArray(deps) ? deps : []).forEach(d => {
+              // Match dep to a uid — same repo first, then cross-repo by number
+              const depUid = issue.repo + '#' + d.number;
+              const fallback = String(d.number);
+              const target = byUid[depUid] ? depUid : byUid[fallback] ? fallback : null;
+              if (target) blockingEdges.add(target + '->' + issue.uid);
+            });
+          }
+          if (cRes.ok) {
+            const children = await cRes.json();
+            (Array.isArray(children) ? children : []).forEach(c => {
+              const childUid = issue.repo + '#' + c.number;
+              const fallback = String(c.number);
+              const child = byUid[childUid] ? childUid : byUid[fallback] ? fallback : null;
+              if (child) parentEdges.add(child + '->' + issue.uid);
+            });
+          }
+        } catch(e) {}
+      }));
+    } else {
+      if (initial) showCorsWarning();
+    }
+
+    // ── Body text fallback ────────────────────────────────────────
+    all.forEach(i => parseBodyEdgesUid(i, byUid, blockingEdges));
+
+    buildIssues(all, blockingEdges, parentEdges);
+    return true;
+  } catch(e) {
+    console.error('fetchIssues error:', e);
+    setStatus('error', e.message);
+    if (initial) showSetupError('Error: ' + e.message);
+    return false;
+  }
+}
+
+// Fetch ALL issues from a GitHub Project (all repos) via GraphQL
+async function fetchAllProjectIssues(out) {
   let ownerType = 'organization';
-  const q = `
+  let cursor = null;
+  let triedUser = false;
+
+  const q = (ot) => `
     query($owner:String!,$num:Int!,$cursor:String){
-      ${ownerType}(login:$owner){
+      ${ot}(login:$owner){
         projectV2(number:$num){
           items(first:100,after:$cursor){
             pageInfo{hasNextPage endCursor}
             nodes{
-              content{ ... on Issue { number } }
+              content{
+                ... on Issue {
+                  number title state body url
+                  repository{ nameWithOwner }
+                  labels(first:10){nodes{name color}}
+                  assignees(first:5){nodes{login}}
+                }
+              }
               fieldValues(first:20){
                 nodes{
                   __typename
                   ... on ProjectV2ItemFieldSingleSelectValue{
-                    name field{ ... on ProjectV2FieldCommon{ name } }
+                    name field{...on ProjectV2FieldCommon{name}}
                   }
                   ... on ProjectV2ItemFieldDateValue{
-                    date field{ ... on ProjectV2FieldCommon{ name } }
-                  }
-                  ... on ProjectV2ItemFieldIterationValue{
-                    title startDate duration
-                    field{ ... on ProjectV2FieldCommon{ name } }
+                    date field{...on ProjectV2FieldCommon{name}}
                   }
                 }
               }
@@ -733,154 +832,85 @@ async function fetchProjectMeta(owner, projectNum, out) {
         }
       }
     }`;
-  let cursor = null;
+
   while (true) {
-    const data = await ghGraphQL(q, { owner, num: projectNum, cursor });
-    // If org query fails, retry as user
-    if (data.errors && ownerType === 'organization') {
-      ownerType = 'user';
-      cursor = null;
-      continue;
+    const data = await ghGraphQL(q(ownerType), { owner: cfg.owner, num: cfg.projectNum, cursor });
+
+    if (data.errors && ownerType === 'organization' && !triedUser) {
+      ownerType = 'user'; triedUser = true; cursor = null; continue;
     }
-    if (data.errors) { console.warn('Project meta errors:', data.errors.map(e=>e.message).join('; ')); break; }
+    if (data.errors) { console.warn('Project fetch errors:', data.errors.map(e=>e.message).join('; ')); return false; }
+
     const proj = data?.data?.[ownerType]?.projectV2;
-    if (!proj) { console.warn('Project not found. Check project number and read:project scope. Response:', JSON.stringify(data?.data)); break; }
+    if (!proj) { console.warn('Project not found. Check owner, project number and read:project scope.'); return false; }
+
     for (const item of proj.items.nodes) {
-      const issueNum = item.content?.number;
-      if (!issueNum) continue;
-      const meta = { projectStatus: null, targetDate: null };
+      const iss = item.content;
+      if (!iss || !iss.number) continue; // skip non-issues (drafts, PRs)
+      const repo = iss.repository?.nameWithOwner || cfg.repo;
+      const uid = repo + '#' + iss.number;
+
+      // Extract project field values
+      let projectStatus = null, targetDate = null;
       for (const fv of (item.fieldValues?.nodes || [])) {
         const fname = (fv.field?.name || '').toLowerCase();
-        if (fv.__typename === 'ProjectV2ItemFieldSingleSelectValue') {
-          // "Status" field
-          if (fname === 'status') meta.projectStatus = fv.name;
-        }
-        if (fv.__typename === 'ProjectV2ItemFieldDateValue') {
-          // Any date field named target/due/deadline
-          if (/target|due|deadline|end|finish/i.test(fname)) meta.targetDate = fv.date;
-        }
-        if (fv.__typename === 'ProjectV2ItemFieldIterationValue') {
-          // Iteration end date as proxy for target date
-          if (!meta.targetDate && fv.startDate && fv.duration) {
-            const start = new Date(fv.startDate);
-            start.setDate(start.getDate() + fv.duration);
-            meta.targetDate = start.toISOString().slice(0,10);
-          }
-        }
+        if (fv.__typename === 'ProjectV2ItemFieldSingleSelectValue' && fname === 'status') projectStatus = fv.name;
+        if (fv.__typename === 'ProjectV2ItemFieldDateValue' && /target|due|deadline|end|finish/i.test(fname)) targetDate = fv.date;
       }
-      out[issueNum] = meta;
+
+      out.push({
+        uid, number: iss.number, repo,
+        title: iss.title, state: iss.state,
+        body: iss.body || '', url: iss.url,
+        labels: iss.labels?.nodes || [],
+        assignees: (iss.assignees?.nodes || []).map(a => a.login),
+        projectStatus, targetDate,
+      });
     }
+
     if (!proj.items.pageInfo.hasNextPage) break;
     cursor = proj.items.pageInfo.endCursor;
   }
+  return true;
 }
 
-async function checkIsOrg(owner) {
-  try {
-    // Try a combined query — whichever field resolves without error tells us the type
-    const data = await ghGraphQL(`
-      query($login:String!){
-        organization(login:$login){ id }
-      }`, { login: owner });
-    // No errors and org id present = it's an org
-    if (!data.errors && data?.data?.organization?.id) return true;
-    // Errors mentioning "Could not resolve" = it's a user, not an org
-    return false;
-  } catch(e) {
-    return false;
+// Parse body text for blocking conventions using uid-aware matching
+function parseBodyEdgesUid(issue, byUid, blockingEdges) {
+  const text = issue.body || '';
+  const [iOwner, iRepo] = issue.repo.split('/');
+  function resolveRef(num) {
+    // Try same-repo first, then any repo in project
+    const sameRepo = issue.repo + '#' + num;
+    if (byUid[sameRepo]) return sameRepo;
+    if (byUid[String(num)]) return String(num);
+    return null;
+  }
+  for (const m of text.matchAll(/\bblocks?:?\s+#(\d+)/gi)) {
+    const t = resolveRef(+m[1]); if (t) blockingEdges.add(issue.uid + '->' + t);
+  }
+  for (const m of text.matchAll(/\bblocked[\s-]by:?\s+#(\d+)/gi)) {
+    const t = resolveRef(+m[1]); if (t) blockingEdges.add(t + '->' + issue.uid);
+  }
+  for (const m of text.matchAll(/\bdepends[\s-]on:?\s+#(\d+)/gi)) {
+    const t = resolveRef(+m[1]); if (t) blockingEdges.add(t + '->' + issue.uid);
   }
 }
 
-// Fetch all issues via REST, then get blocking data from Projects v2 + body text
-async function fetchIssues(initial = false) {
-  setStatus('loading', 'Fetching…');
-  try {
-    const [owner, repo] = cfg.repo.split('/');
-
-    // 1. REST: reliable, always works, gets issue bodies
-    let page = 1, all = [];
-    while (true) {
-      const res = await ghFetch(`/repos/${owner}/${repo}/issues?state=all&per_page=100&page=${page}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = err.message || `HTTP ${res.status}`;
-        setStatus('error', msg);
-        if (initial) showSetupError('GitHub error: ' + msg);
-        return false;
-      }
-      const data = await res.json();
-      all = all.concat(data.filter(i => !i.pull_request));
-      if (data.length < 100) break;
-      page++;
-    }
-
-    const issueNums = new Set(all.map(i => i.number));
-    const blockingEdges = new Set();
-
-    // 2. Fetch native dependencies via REST API (requires https:// origin — see CORS note)
-    //    When running from file:// the REST /dependencies endpoint is CORS-blocked.
-    //    Host this file on GitHub Pages (or any https:// server) to fix that.
-    const canFetchDeps = cfg.proxyUrl || location.hostname === 'localhost';
-    const parentEdges = new Set(); // child->parent (blue arrows)
-    if (canFetchDeps) {
-      // Fetch blocked_by AND sub_issues for every issue in parallel
-      const results = await Promise.all(all.map(async issue => {
-        const out = { num: issue.number, blockedBy: [], children: [] };
-        try {
-          const [dRes, cRes] = await Promise.all([
-            ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies/blocked_by`),
-            ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/sub_issues`),
-          ]);
-          if (dRes.ok) {
-            const deps = await dRes.json();
-            out.blockedBy = (Array.isArray(deps) ? deps : []).map(d => d.number);
-          }
-          if (cRes.ok) {
-            const children = await cRes.json();
-            out.children = (Array.isArray(children) ? children : []).map(c => c.number);
-          }
-        } catch(e) {}
-        return out;
-      }));
-      results.forEach(({ num, blockedBy, children }) => {
-        blockedBy.forEach(prereq => {
-          if (issueNums.has(prereq)) blockingEdges.add(prereq + '->' + num);
-        });
-        children.forEach(child => {
-          if (issueNums.has(child)) parentEdges.add(child + '->' + num); // child -> parent
-        });
-      });
-    } else {
-      if (initial) showCorsWarning();
-    }
-
-    // 3. Body text fallback (always runs — catches "blocked by #N" in descriptions)
-    all.forEach(i => parseBodyEdges(i, issueNums, blockingEdges));
-
-    // 4. Fetch project Status + target date via GraphQL (CORS-safe)
-    const projectMeta = {}; // keyed by issue number: { projectStatus, targetDate }
-    if (cfg.projectNum) {
-      try {
-        await fetchProjectMeta(owner, cfg.projectNum, projectMeta);
-      } catch(e) { console.warn('Project meta fetch failed:', e.message); }
-    }
-
-    const normalised = all.map(i => ({
-      number: i.number, title: i.title, state: i.state,
-      body: i.body || '', url: i.html_url,
-      labels: i.labels || [], assignees: i.assignees || [],
-      projectStatus: projectMeta[i.number]?.projectStatus || null,
-      targetDate:    projectMeta[i.number]?.targetDate    || null,
-    }));
-    buildIssues(normalised, blockingEdges, parentEdges);
-    return true;
-  } catch (e) {
-    console.error('fetchIssues error:', e);
-    setStatus('error', e.message);
-    if (initial) showSetupError('Error: ' + e.message);
-    return false;
-  }
+// Show a one-time banner explaining the CORS limitation when running from file://
+function showCorsWarning() {
+  const existing = document.getElementById('corsWarning');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'corsWarning';
+  banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999;background:#9a6700;color:#fff8c5;padding:12px 20px;font-size:13px;display:flex;align-items:center;gap:12px;line-height:1.4';
+  banner.innerHTML = `
+    <span style="font-size:18px">&#9888;</span>
+    <span><strong>Proxy not set</strong> — blocking arrows require the Cloudflare proxy URL to be configured.
+    <a href="#" onclick="document.getElementById('corsWarning').remove();return false" style="color:#fff8c5;margin-left:8px">Dismiss</a>
+    </span>`;
+  document.body.appendChild(banner);
 }
+
 
 // ── Polling ──────────────────────────────────────────────────────────
 function startPolling() {
@@ -945,10 +975,10 @@ function renderSidebar() {
   });
   list.innerHTML = filtered.map(i => {
     const pillLabel = {todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
-    const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(n=>'#'+n).join(', ')}</span>` : '';
+    const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(uid=>{const b=issues.find(x=>x.id===uid);return b?b.shortId:uid;}).join(', ')}</span>` : '';
     const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">⊙ ${fmtDate(i.targetDate)}</span>` : '';
-    return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue(${i.id})">
-      <div class="issue-item-header"><span class="issue-num">#${i.id}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
+    return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue('${i.id}')">
+      <div class="issue-item-header"><span class="issue-num">${i.shortId}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
       <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}${dateStr}</div>
     </div>`;
   }).join('');
@@ -956,24 +986,24 @@ function renderSidebar() {
 function filterSidebar() { renderSidebar(); }
 
 // ── Detail ────────────────────────────────────────────────────────────
-function selectIssue(id) { selectedId=id; renderSidebar(); showDetail(id); drawMap(); }
+function selectIssue(id) { selectedId=String(id); renderSidebar(); showDetail(String(id)); drawMap(); }
 
 function showDetail(id) {
   const iss = issues.find(i=>i.id===id);
   if (!iss) return;
   document.getElementById('detail').classList.add('open');
-  document.getElementById('detailTitle').textContent = '#'+iss.id+' '+iss.title;
+  document.getElementById('detailTitle').textContent = iss.shortId+' '+iss.title;
   const prereqs = iss.blockedBy.map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const unlocks = iss.blocksOthers.map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const parents = (iss.parents||[]).map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const children = issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>{
     return `<div class="dep-item"><span>#${i.id} ${i.title.slice(0,28)}${i.title.length>28?'…':''}</span></div>`;
@@ -1069,7 +1099,7 @@ function barycentre(iss, prevLayerIdx) {
 function autoLayout() { smartLayout(); }
 
 // ── Layout persistence ────────────────────────────────────────────────
-function layoutKey() { return 'layout:' + cfg.repo; }
+function layoutKey() { return 'layout:' + (cfg.projectNum ? cfg.owner+'/'+cfg.projectNum : cfg.repo); }
 
 function resetLayout() {
   try { localStorage.removeItem(layoutKey()); } catch(e) {}
@@ -1258,12 +1288,11 @@ function drawMap(){
     const cx=s.x+sw/2,cy=s.y+sh/2;
     const idFs=Math.max(9,10*zoom),titleFs=Math.max(10,12*zoom);
     ctx.fillStyle=col.text;ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.font='500 '+idFs+'px -apple-system,sans-serif';ctx.fillText('#'+iss.id,cx,cy-titleFs*0.8);
     ctx.font='500 '+titleFs+'px -apple-system,sans-serif';
     const maxW=sw-14*zoom;let title=iss.title;
     while(title.length>3&&ctx.measureText(title).width>maxW)title=title.slice(0,-1);
     if(title!==iss.title)title=title.slice(0,-1)+'…';
-    ctx.fillText(title,cx,cy+titleFs*0.8);
+    ctx.fillText(title,cx,cy);
     ctx.restore();
   });
 }
