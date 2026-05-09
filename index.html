@@ -398,7 +398,8 @@
     <div class="status-dot loading" id="statusDot"></div>
     <span id="statusText" style="font-size:12px;color:var(--text2)">Connecting…</span>
     <button class="btn sm" onclick="refresh()" id="refreshBtn">↻ Refresh</button>
-    <button class="btn sm" onclick="autoLayout()">Auto-layout</button>
+    <button class="btn sm" onclick="smartLayout()">Auto-layout</button>
+    <button class="btn sm" onclick="resetLayout()">Reset layout</button>
     <button class="btn sm" onclick="disconnect()">Disconnect</button>
   </header>
 
@@ -509,7 +510,8 @@ async function connect() {
   document.getElementById('repoLabel').innerHTML = repo.split('/')[0] + ' / <span>' + repo.split('/')[1] + '</span>';
 
   resizeCanvas();
-  autoLayout();
+  // Load saved layout first; smartLayout runs inside buildIssues if no positions exist
+  loadLayout();
   startPolling();
   setConnectLoading(false);
 }
@@ -644,10 +646,41 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
   });
   const idSet = new Set(issues.map(i => i.id));
   Object.keys(nodePos).forEach(k => { if (!idSet.has(+k)) delete nodePos[k]; });
+
+  // Place any issues that don't yet have a position (new arrivals since last load)
+  const newIds = issues.filter(i => !nodePos[i.id]).map(i => i.id);
+  if (newIds.length > 0) {
+    if (Object.keys(nodePos).length === 0) {
+      // First load — run full layout
+      smartLayout();
+    } else {
+      // Incremental: place new nodes near their neighbours
+      newIds.forEach(id => placeNewNode(id));
+    }
+  }
+
+  // Persist layout to localStorage
+  saveLayout();
+
   const src = blockingEdges.size + ' edges';
   renderSidebar();
   drawMap();
   setStatus('ok', issues.length + ' issues · ' + src + ' · ' + new Date().toLocaleTimeString());
+}
+
+function placeNewNode(id) {
+  // Place a new node near issues it connects to, or in open space
+  const iss = issues.find(i => i.id === id);
+  const neighbours = [...(iss?.blockedBy||[]), ...(iss?.blocksOthers||[]), ...(iss?.parents||[])];
+  const neighbourPositions = neighbours.map(n => nodePos[n]).filter(Boolean);
+  const W = canvas.width || 800, H = canvas.height || 500;
+  if (neighbourPositions.length > 0) {
+    const avgX = neighbourPositions.reduce((s,p)=>s+p.x,0)/neighbourPositions.length;
+    const avgY = neighbourPositions.reduce((s,p)=>s+p.y,0)/neighbourPositions.length;
+    nodePos[id] = { x: avgX + (Math.random()-0.5)*200, y: avgY + (Math.random()-0.5)*100, w: DEFAULT_W, h: DEFAULT_H };
+  } else {
+    nodePos[id] = { x: 40 + Math.random()*(W-DEFAULT_W-80), y: 40 + Math.random()*(H-DEFAULT_H-80), w: DEFAULT_W, h: DEFAULT_H };
+  }
 }
 
 // Show a one-time banner explaining the CORS limitation when running from file://
@@ -979,18 +1012,91 @@ function topoLayers() {
   return layers;
 }
 
-function autoLayout() {
-  const W=canvas.width||600, H=canvas.height||480;
-  const layers=topoLayers(), numL=layers.length;
-  const colW=Math.max(DEFAULT_W+40,(W-80)/numL);
-  layers.forEach((layer,li)=>{
-    const rowH=Math.max(DEFAULT_H+24,(H-60)/layer.length);
-    layer.forEach((id,ri)=>{
-      const ex=nodePos[id];
-      nodePos[id]={x:24+li*colW, y:24+ri*rowH+(rowH-DEFAULT_H)/2, w:ex?ex.w:DEFAULT_W, h:ex?ex.h:DEFAULT_H};
+// smartLayout: Sugiyama-inspired left-to-right layout.
+// 1. Topological layer assignment
+// 2. Within each layer, order nodes to minimise edge crossings (barycenter heuristic)
+// 3. Spread vertically with padding
+function smartLayout() {
+  const W = canvas.width || 800, H = canvas.height || 500;
+  const layers = topoLayers();
+  const numL = layers.length;
+  if (numL === 0) return;
+
+  const HGAP = Math.max(DEFAULT_W + 60, (W - 60) / numL);
+  const VGAP = DEFAULT_H + 32;
+
+  // Order within each layer by barycenter of connected nodes in previous layer
+  for (let li = 1; li < layers.length; li++) {
+    const prev = layers[li - 1];
+    const prevIdx = {};
+    prev.forEach((id, i) => { prevIdx[id] = i; });
+    layers[li].sort((a, b) => {
+      const issA = issues.find(i => i.id === a);
+      const issB = issues.find(i => i.id === b);
+      const baryA = barycentre(issA, prevIdx);
+      const baryB = barycentre(issB, prevIdx);
+      return baryA - baryB;
+    });
+  }
+
+  layers.forEach((layer, li) => {
+    const totalH = layer.length * VGAP - (VGAP - DEFAULT_H);
+    const startY = Math.max(24, (H - totalH) / 2);
+    layer.forEach((id, ri) => {
+      const ex = nodePos[id];
+      nodePos[id] = {
+        x: 24 + li * HGAP,
+        y: startY + ri * VGAP,
+        w: ex ? ex.w : DEFAULT_W,
+        h: ex ? ex.h : DEFAULT_H,
+      };
     });
   });
-  pan={x:0,y:0}; zoom=1; drawMap();
+
+  pan = { x: 0, y: 0 }; zoom = 1;
+  saveLayout();
+  drawMap();
+}
+
+function barycentre(iss, prevLayerIdx) {
+  if (!iss) return 0;
+  const neighbours = [...(iss.blockedBy||[]), ...(iss.parents||[])];
+  const idxs = neighbours.map(n => prevLayerIdx[n]).filter(v => v !== undefined);
+  if (!idxs.length) return 999;
+  return idxs.reduce((s, v) => s + v, 0) / idxs.length;
+}
+
+function autoLayout() { smartLayout(); }
+
+// ── Layout persistence ────────────────────────────────────────────────
+function layoutKey() { return 'layout:' + cfg.repo; }
+
+function resetLayout() {
+  try { localStorage.removeItem(layoutKey()); } catch(e) {}
+  nodePos = {};
+  smartLayout();
+}
+
+function saveLayout() {
+  try {
+    const data = { pan, zoom, nodes: {} };
+    Object.entries(nodePos).forEach(([k, v]) => { data.nodes[k] = v; });
+    localStorage.setItem(layoutKey(), JSON.stringify(data));
+  } catch(e) {}
+}
+
+function loadLayout() {
+  try {
+    const raw = localStorage.getItem(layoutKey());
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (data.pan)  pan  = data.pan;
+    if (data.zoom) zoom = data.zoom;
+    if (data.nodes) {
+      Object.entries(data.nodes).forEach(([k, v]) => { nodePos[+k] = v; });
+    }
+    return true;
+  } catch(e) { return false; }
 }
 
 function fitView() {
@@ -1066,6 +1172,7 @@ canvas.addEventListener('mouseup',e=>{
     const rect=canvas.getBoundingClientRect();
     if(Math.abs(e.clientX-rect.left-interaction.startSx)<5&&Math.abs(e.clientY-rect.top-interaction.startSy)<5)selectIssue(interaction.id);
   }
+  saveLayout();
   interaction=null;canvas.style.cursor='default';
 });
 // Double-click a node to open the issue on GitHub
