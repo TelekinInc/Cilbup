@@ -167,7 +167,7 @@
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
   /* ── Layout ── */
-  .app-body { display: flex; flex: 1; overflow: hidden; }
+  .app-body { display: flex; flex: 1; overflow: hidden; position: relative; }
 
   /* ── Sidebar ── */
   #sidebar {
@@ -215,7 +215,7 @@
   .issue-meta-row { display: flex; gap: 4px; flex-wrap: wrap; }
 
   /* ── Map ── */
-  #mapWrap { flex: 1; position: relative; overflow: hidden; }
+  #mapWrap { flex: 1; position: relative; overflow: hidden; min-width: 0; }
   #mapCanvas { width: 100%; height: 100%; display: block; }
   .map-controls {
     position: absolute;
@@ -265,8 +265,15 @@
     flex-direction: column;
     overflow-y: auto;
     background: var(--bg2);
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    z-index: 10;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.12);
+    pointer-events: none;
   }
   #detail.open { display: flex; }
+  #detail .detail-header,
+  #detail .detail-body { pointer-events: auto; }
   .detail-header {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border);
@@ -407,8 +414,8 @@
         <button onclick="fitView()" title="Fit all" style="font-size:12px">⊡</button>
       </div>
       <div class="legend">
-        <div class="legend-row"><div class="legend-arr" style="border-top-color:#cf222e"></div><span style="color:#cf222e">Blocks</span> — do first, then →</div>
-        <div class="legend-row"><div class="legend-arr" style="border-top-style:dashed"></div> Child → Parent</div>
+        <div class="legend-row"><div class="legend-arr" style="border-top-color:#cf222e"></div><span>Blocker &rarr; Blocked</span></div>
+        <div class="legend-row"><div class="legend-arr" style="border-top-color:var(--blue)"></div><span>Child &rarr; Parent</span></div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Open</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Closed</div>
@@ -818,7 +825,12 @@ function zoomIn(){zoom=Math.min(3,zoom*1.2);drawMap();}
 function zoomOut(){zoom=Math.max(0.2,zoom/1.2);drawMap();}
 
 // ── Canvas ────────────────────────────────────────────────────────────
-function resizeCanvas(){const wrap=document.getElementById('mapWrap');canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;}
+function resizeCanvas(){
+  const wrap=document.getElementById('mapWrap');
+  const w=wrap.clientWidth, h=wrap.clientHeight;
+  if(w<10||h<10) return; // ignore when hidden
+  canvas.width=w; canvas.height=h;
+}
 function w2s(x,y){return{x:x*zoom+pan.x,y:y*zoom+pan.y};}
 function s2w(x,y){return{x:(x-pan.x)/zoom,y:(y-pan.y)/zoom};}
 
@@ -939,7 +951,7 @@ function drawMap(){
   });
   // Blue dashed: parent arrows (child → parent)
   issues.forEach(iss=>{
-    (iss.parents||[]).forEach(parentId=>drawArrow(iss.id, parentId, BLUE, [6,3]));
+    (iss.parents||[]).forEach(parentId=>drawArrow(iss.id, parentId, BLUE));
   });
   // Nodes
   issues.forEach(iss=>{
@@ -957,12 +969,7 @@ function drawMap(){
     const maxW=sw-14*zoom;let title=iss.title;
     while(title.length>3&&ctx.measureText(title).width>maxW)title=title.slice(0,-1);
     if(title!==iss.title)title=title.slice(0,-1)+'…';
-    const ty=cy+titleFs*0.8;
-    ctx.fillText(title,cx,ty);
-    // Underline the title to hint it is clickable
-    const tw=ctx.measureText(title).width;
-    ctx.beginPath();ctx.moveTo(cx-tw/2,ty+2*zoom);ctx.lineTo(cx+tw/2,ty+2*zoom);
-    ctx.strokeStyle=col.text;ctx.lineWidth=0.7*zoom;ctx.stroke();
+    ctx.fillText(title,cx,cy+titleFs*0.8);
     const hsz=HANDLE*zoom*0.8;ctx.fillStyle=isSel?BLUE:col.stroke;ctx.globalAlpha=0.4;
     [[s.x+sw-hsz,s.y+sh-hsz],[s.x+sw-hsz,s.y],[s.x,s.y+sh-hsz],[s.x,s.y]].forEach(([hx,hy])=>ctx.fillRect(hx,hy,hsz,hsz));
     [s.x+sw-hsz,s.x].forEach(hx=>ctx.fillRect(hx,s.y+sh/2-hsz/3,hsz,hsz*0.6));
