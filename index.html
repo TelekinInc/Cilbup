@@ -411,7 +411,7 @@
     <div id="sidebar">
       <div class="sidebar-header">
         <input type="text" id="sideSearch" placeholder="Search issues…" oninput="renderSidebar()">
-        <button class="btn sm" id="sortBtn" onclick="cycleSortSidebar()" title="Sort order">#&nbsp;↓</button>
+        <button class="btn sm" id="sortBtn" onclick="cycleSortSidebar()" title="Sort order">📅 ↓</button>
       </div>
       <div class="issue-list" id="issueList">
         <div class="empty-state"><div class="spinner"></div><span>Loading issues…</span></div>
@@ -466,7 +466,7 @@ let selectedId = null;
 let pollTimer = null;
 let lastEtag = null;
 let interaction = null;
-let sidebarSort = { key: 'id', dir: 1 }; // key: 'id'|'date', dir: 1=asc,-1=desc
+let sidebarSort = { key: 'date', dir: 1 }; // key: 'id'|'date', dir: 1=asc,-1=desc
 let pan = { x: 60, y: 60 }, zoom = 1;
 const DEFAULT_W = 160, DEFAULT_H = 64;
 const HANDLE = 8;
@@ -508,13 +508,25 @@ async function connect() {
 
   document.getElementById('setup').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
-  const label = projectNum ? effectiveOwner + ' / <span>Project ' + projectNum + '</span>' : repo.split('/')[0] + ' / <span>' + repo.split('/')[1] + '</span>';
-  document.getElementById('repoLabel').innerHTML = label;
+  cfg.projectTitle = null; // will be filled after first fetch
+  updateHeaderLabel();
 
   resizeCanvas();
   loadLayout();
   startPolling();
   setConnectLoading(false);
+}
+
+function updateHeaderLabel() {
+  let label;
+  if (cfg.projectNum) {
+    const name = cfg.projectTitle || ('Project ' + cfg.projectNum);
+    label = cfg.owner + ' / <span>' + name + '</span>';
+  } else {
+    const parts = (cfg.repo || '').split('/');
+    label = (parts[0] || '') + ' / <span>' + (parts[1] || '') + '</span>';
+  }
+  document.getElementById('repoLabel').innerHTML = label;
 }
 
 function disconnect() {
@@ -806,6 +818,7 @@ async function fetchAllProjectIssues(out) {
     query($owner:String!,$num:Int!,$cursor:String){
       ${ot}(login:$owner){
         projectV2(number:$num){
+          title
           items(first:100,after:$cursor){
             pageInfo{hasNextPage endCursor}
             nodes{
@@ -844,6 +857,8 @@ async function fetchAllProjectIssues(out) {
 
     const proj = data?.data?.[ownerType]?.projectV2;
     if (!proj) { console.warn('Project not found. Check owner, project number and read:project scope.'); return false; }
+    // Store project title on first page
+    if (!cursor && proj.title) { cfg.projectTitle = proj.title; updateHeaderLabel(); }
 
     for (const item of proj.items.nodes) {
       const iss = item.content;
@@ -951,8 +966,8 @@ function cycleSortSidebar() {
   const states = [
     { key:'id',   dir: 1,  label:'# ↓' },
     { key:'id',   dir:-1,  label:'# ↑' },
-    { key:'date', dir: 1,  label:'○ ↓' },
-    { key:'date', dir:-1,  label:'○ ↑' },
+    { key:'date', dir: 1,  label:'📅 ↓' },
+    { key:'date', dir:-1,  label:'📅 ↑' },
   ];
   const cur = states.findIndex(s => s.key === sidebarSort.key && s.dir === sidebarSort.dir);
   const next = states[(cur + 1) % states.length];
@@ -976,8 +991,8 @@ function renderSidebar() {
   });
   list.innerHTML = filtered.map(i => {
     const pillLabel = {todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
-    const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">&#x229b; blocked by ${i.blockedBy.map(uid=>{const b=issues.find(x=>x.id===uid);return b?b.shortId:uid;}).join(', ')}</span>` : '';
-    const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">⊙ ${fmtDate(i.targetDate)}</span>` : '';
+    const blockInfo = i.blockedBy.length ? `<span style="font-size:11px;color:var(--red)">${i.blockedBy.map(uid=>{const b=issues.find(x=>x.id===uid);return b?b.shortId:uid.split('/').pop();}).join(', ')}</span>` : '';
+    const dateStr = i.targetDate ? `<span style="font-size:11px;color:${(i.status==='done'||i.status==='binned')?'var(--text2)':dateColour(i.targetDate)};margin-left:4px">📅 ${fmtDate(i.targetDate)}</span>` : '';
     return `<div class="issue-item${selectedId===i.id?' selected':''}" onclick="selectIssue('${i.id}')">
       <div class="issue-item-header"><span class="issue-num">${i.shortId}</span><span class="issue-title-text" title="${i.title.replace(/"/g,'&quot;')}">${i.title}</span></div>
       <div class="issue-meta-row"><span class="pill ${i.status}">${pillLabel}</span>${blockInfo}${dateStr}</div>
@@ -996,15 +1011,15 @@ function showDetail(id) {
   document.getElementById('detailTitle').textContent = iss.shortId+' '+iss.title;
   const prereqs = iss.blockedBy.map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:String(n).split('/').pop()}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const unlocks = iss.blocksOthers.map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:String(n).split('/').pop()}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const parents = (iss.parents||[]).map(n=>{
     const d=issues.find(i=>i.id===n);
-    return `<div class="dep-item"><span>${d?d.shortId:n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+    return `<div class="dep-item"><span>${d?d.shortId:String(n).split('/').pop()}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const children = issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>{
     return `<div class="dep-item"><span>#${i.id} ${i.title.slice(0,28)}${i.title.length>28?'…':''}</span></div>`;
@@ -1031,7 +1046,7 @@ function allEdges() {
   const edges = []; // {from, to}
   issues.forEach(iss => {
     (iss.blockedBy||[]).forEach(from => edges.push({from, to: iss.id}));
-    (iss.parents||[]).forEach(from => edges.push({from, to: iss.id}));
+    (iss.parents||[]).forEach(parentId => edges.push({from: iss.id, to: parentId}));
   });
   return edges;
 }
@@ -1104,8 +1119,8 @@ function orderLayers(layers) {
   layers.forEach(layer => layer.forEach((id, i) => { posOf[id] = i; }));
   const getNeighbours = (iss, dir) => {
     if (!iss) return [];
-    if (dir === 'back') return [...(iss.blockedBy||[]), ...(iss.parents||[])];
-    return issues.filter(i => (i.blockedBy||[]).includes(iss.id)||(i.parents||[]).includes(iss.id)).map(i=>i.id);
+    if (dir === 'back') return [...(iss.blockedBy||[])]; // blockers are prereqs; parents are successors
+    return [...issues.filter(i => (i.blockedBy||[]).includes(iss.id)).map(i=>i.id), ...(iss.parents||[])];
   };
   for (let pass = 0; pass < 6; pass++) {
     // Forward
@@ -1371,7 +1386,7 @@ function drawMap(){
   });
   // Blue: parent arrows — from parent (left) to child (right)
   issues.forEach(iss=>{
-    (iss.parents||[]).forEach(parentId=>drawArrow(parentId, iss.id, BLUE));
+    (iss.parents||[]).forEach(parentId=>drawArrow(iss.id, parentId, BLUE));
   });
   // Nodes
   issues.forEach(iss=>{
