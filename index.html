@@ -414,8 +414,16 @@
         <button onclick="fitView()" title="Fit all" style="font-size:12px">⊡</button>
       </div>
       <div class="legend">
-        <div class="legend-row"><div class="legend-arr" style="border-top-color:#cf222e"></div><span>Blocker &rarr; Blocked</span></div>
-        <div class="legend-row"><div class="legend-arr" style="border-top-color:var(--blue)"></div><span>Child &rarr; Parent</span></div>
+        <div class="legend-row">
+          <span style="color:#cf222e">Blocker</span>
+          <svg width="32" height="10" viewBox="0 0 32 10" fill="none" xmlns="http://www.w3.org/2000/svg"><line x1="0" y1="5" x2="26" y2="5" stroke="#cf222e" stroke-width="1.5"/><polygon points="26,1 32,5 26,9" fill="#cf222e"/></svg>
+          <span style="color:#cf222e">Blocked</span>
+        </div>
+        <div class="legend-row">
+          <span style="color:var(--blue)">Child</span>
+          <svg width="32" height="10" viewBox="0 0 32 10" fill="none" xmlns="http://www.w3.org/2000/svg"><line x1="0" y1="5" x2="26" y2="5" stroke="var(--blue)" stroke-width="1.5"/><polygon points="26,1 32,5 26,9" fill="var(--blue)"/></svg>
+          <span style="color:var(--blue)">Parent</span>
+        </div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Open</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Closed</div>
@@ -758,13 +766,16 @@ function showDetail(id) {
   if (!iss) return;
   document.getElementById('detail').classList.add('open');
   document.getElementById('detailTitle').textContent = '#'+iss.id+' '+iss.title;
-  const prereqs = iss.blockedBy.map(n=>{
-    const d=issues.find(i=>i.id===n);
+  const prereqs = iss.blockedBy.map(n=>{\n    const d=issues.find(i=>i.id===n);
     return `<div class="dep-item"><span class="dep-arrow">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
-  const unlocks = iss.blocksOthers.map(n=>{
-    const d=issues.find(i=>i.id===n);
+  const unlocks = iss.blocksOthers.map(n=>{\n    const d=issues.find(i=>i.id===n);
     return `<div class="dep-item"><span class="dep-arrow" style="color:var(--green)">&#8594;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+  }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
+  const parents = (iss.parents||[]).map(n=>{\n    const d=issues.find(i=>i.id===n);
+    return `<div class="dep-item"><span class="dep-arrow" style="color:var(--blue)">&#8593;</span><span>#${n}${d?' '+d.title.slice(0,28):''}</span></div>`;
+  }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
+  const children = issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>{\n    return `<div class="dep-item"><span class="dep-arrow" style="color:var(--blue)">&#8595;</span><span>#${i.id} ${i.title.slice(0,28)}${i.title.length>28?'…':''}</span></div>`;
   }).join('')||'<div style="font-size:12px;color:var(--text2)">None</div>';
   const labels = iss.labels.map(l=>{const c=l.color||'aaa';return `<span class="pill" style="background:#${c}22;color:#${c};border-color:#${c}88">${l.name}</span>`;}).join(' ')||'—';
   document.getElementById('detailBody').innerHTML = `
@@ -773,6 +784,8 @@ function showDetail(id) {
     <div><div class="detail-section-label">Labels</div><div style="display:flex;gap:4px;flex-wrap:wrap">${labels}</div></div>
     <div><div class="detail-section-label">Prerequisites</div>${prereqs}</div>
     <div><div class="detail-section-label">Unlocks</div>${unlocks}</div>
+    <div><div class="detail-section-label">Parent</div>${parents}</div>
+    <div><div class="detail-section-label">Children</div>${children}</div>
     <div><a class="detail-link" href="${iss.url}" target="_blank" rel="noopener">Open in GitHub &#8599;</a></div>
     ${iss.body?`<div><div class="detail-section-label">Description</div><div style="font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;max-height:140px;overflow-y:auto">${iss.body.slice(0,400).replace(/</g,'&lt;')}${iss.body.length>400?'…':''}</div></div>`:''}
   `;
