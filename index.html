@@ -512,9 +512,13 @@ async function connect() {
   cfg.projectTitle = null; // will be filled after first fetch
   updateHeaderLabel();
 
-  resizeCanvas();
-  loadLayout();
-  startPolling();
+  // Defer resize until browser has rendered the appShell layout
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    loadLayout();
+    smartLayout();
+    startPolling();
+  });
   setConnectLoading(false);
 }
 
@@ -1188,64 +1192,69 @@ function smartLayout() {
     // Order within layers (barycenter)
     orderLayers(layers);
 
-    // Find long edges (spanning > 1 layer) and the "rank" of each node within its layer
-    const rank = {}; // id -> row index within its layer
+    // Initial pixel positions — assign sequentially first
+    const rank = {};
     layers.forEach(lyr => lyr.forEach((id, ri) => { rank[id] = ri; }));
 
-    // For each long edge, record which intermediate layers it passes through and at what y-fraction
-    // Then for each intermediate layer, nudge any node that sits in the arrow's path downward
-    const longEdges = edges.filter(e => layer[e.to] - layer[e.from] > 1);
+    const nodeX = {}, nodeY = {};
+    layers.forEach((lyr, li) => {
+      lyr.forEach((id, ri) => {
+        nodeX[id] = 40 + li * HGAP;
+        nodeY[id] = curY + ri * VGAP;
+      });
+    });
 
-    // Build a "reserved rows" structure: for each intermediate layer, track y-slots occupied by long edges
-    // We use fractional row positions (the interpolated rank of the arrow at that layer)
-    const reservations = {}; // layerIdx -> sorted list of fractional row positions
+    // Clearance pass: for every long edge (skipping ≥1 column), check whether
+    // any intermediate-column node sits inside the arrow's bounding band,
+    // and if so push it downward until it clears.
+    const longEdges = edges.filter(e => layer[e.to] - layer[e.from] > 1);
+    const MARGIN = 8; // px clearance above/below arrow centre line
+
     longEdges.forEach(({from, to}) => {
+      const x0 = nodeX[from] + DEFAULT_W, y0 = nodeY[from] + DEFAULT_H / 2;
+      const x1 = nodeX[to],              y1 = nodeY[to]   + DEFAULT_H / 2;
       const li0 = layer[from], li1 = layer[to];
-      const r0 = rank[from], r1 = rank[to];
+
       for (let li = li0 + 1; li < li1; li++) {
-        const frac = (li - li0) / (li1 - li0);
-        const yFrac = r0 + frac * (r1 - r0); // interpolated row position
-        if (!reservations[li]) reservations[li] = [];
-        reservations[li].push(yFrac);
+        layers[li].forEach(id => {
+          const nx = nodeX[id], ny = nodeY[id];
+          const nw = DEFAULT_W,  nh = DEFAULT_H;
+          // Interpolate the arrow's Y at this column's X centre
+          const t = (nx + nw / 2 - x0) / (x1 - x0);
+          const arrowY = y0 + t * (y1 - y0);
+          // Check vertical overlap with this node
+          const nodeTop = ny - MARGIN, nodeBot = ny + nh + MARGIN;
+          if (arrowY >= nodeTop && arrowY <= nodeBot) {
+            // Push node down so its top clears the arrow
+            const shift = Math.ceil(arrowY + MARGIN - ny);
+            nodeY[id] += shift;
+            // Also push all nodes below it in this layer down by the same amount
+            // to avoid overlap
+            layers[li].forEach((otherId, ri) => {
+              if (nodeY[otherId] > nodeY[id] - shift && otherId !== id) {
+                if (nodeY[otherId] < nodeY[id] + nh + MARGIN) {
+                  nodeY[otherId] = nodeY[id] + nh + VGAP;
+                }
+              }
+            });
+          }
+        });
       }
     });
 
-    // For each intermediate layer with reservations, shift nodes that are too close to a reserved lane
-    layers.forEach((lyr, li) => {
-      if (!reservations[li] || !lyr.length) return;
-      const lanes = reservations[li].sort((a,b) => a-b);
-      // For each node, if its rank is within 0.6 of a reserved lane, push it away
-      const newRanks = lyr.map((id, ri) => ({ id, ri }));
-      lanes.forEach(lane => {
-        newRanks.forEach(nr => {
-          if (Math.abs(nr.ri - lane) < 0.65) {
-            // Push down if node is at or below the lane
-            if (nr.ri >= lane - 0.1) nr.ri = lane + 0.7;
-          }
-        });
-      });
-      // Re-sort and re-assign ranks so nodes don't overlap
-      newRanks.sort((a,b) => a.ri - b.ri);
-      newRanks.forEach((nr, i) => { nr.ri = i; rank[nr.id] = i; });
-      // Update layer order to match new ranks
-      layers[li] = newRanks.map(nr => nr.id);
+    // Write final positions
+    let maxBot = curY;
+    ids.forEach(id => {
+      const ex = nodePos[id];
+      nodePos[id] = {
+        x: nodeX[id],
+        y: nodeY[id],
+        w: ex ? ex.w : DEFAULT_W,
+        h: ex ? ex.h : DEFAULT_H,
+      };
+      maxBot = Math.max(maxBot, nodeY[id] + DEFAULT_H);
     });
-
-    // Assign pixel positions
-    const maxRows = Math.max(...layers.map(l => l.length));
-    layers.forEach((lyr, li) => {
-      lyr.forEach((id, ri) => {
-        const ex = nodePos[id];
-        nodePos[id] = {
-          x: 40 + li * HGAP,
-          y: curY + ri * VGAP,
-          w: ex ? ex.w : DEFAULT_W,
-          h: ex ? ex.h : DEFAULT_H,
-        };
-      });
-    });
-    const subH = maxRows * VGAP;
-    curY += subH + GROUP_GAP;
+    curY = maxBot + GROUP_GAP;
   });
 
   pan = { x: 0, y: 0 }; zoom = 1;
