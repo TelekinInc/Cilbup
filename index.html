@@ -214,7 +214,7 @@
   .issue-item-header { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
   .issue-num { font-size: 11px; color: var(--text2); font-weight: 500; }
   .issue-title-text { font-size: 13px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .issue-meta-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .issue-meta-row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 
   /* ── Map ── */
   #mapWrap { flex: 1; position: relative; overflow: hidden; min-width: 0; }
@@ -992,7 +992,7 @@ function renderSidebar() {
       const da = a.targetDate || '9999', db = b.targetDate || '9999';
       return da < db ? -sidebarSort.dir : da > db ? sidebarSort.dir : 0;
     }
-    return (a.id - b.id) * sidebarSort.dir;
+    return (a.number - b.number) * sidebarSort.dir;
   });
   list.innerHTML = filtered.map(i => {
     const pillLabel = {todo:'Todo',done:'Done',binned:'Binned',inprogress:'In progress',blocked:'Blocked'}[i.status]||i.status;
