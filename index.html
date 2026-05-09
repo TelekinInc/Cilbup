@@ -26,7 +26,7 @@
     --red-bg: #ffebe9;
     --purple: #6639ba;
     --purple-bg: #fbefff;
-    --arrow: #0969da;
+    --arrow: #cf222e;
     --radius: 8px;
     --radius-lg: 12px;
   }
@@ -51,7 +51,7 @@
       --red-bg: #2d0f0f;
       --purple: #bc8cff;
       --purple-bg: #1c0e3f;
-      --arrow: #58a6ff;
+      --arrow: #cf222e;
     }
   }
 
@@ -407,11 +407,13 @@
         <button onclick="fitView()" title="Fit all" style="font-size:12px">⊡</button>
       </div>
       <div class="legend">
-        <div class="legend-row"><div class="legend-arr"></div> Do this first → then this</div>
+        <div class="legend-row"><div class="legend-arr" style="border-top-color:#cf222e"></div><span style="color:#cf222e">Blocks</span> — do first, then →</div>
+        <div class="legend-row"><div class="legend-arr" style="border-top-style:dashed"></div> Child → Parent</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--green-bg);border-color:var(--green)"></div> Open</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--orange-bg);border-color:var(--orange)"></div> In progress</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--bg3);border-color:var(--border2)"></div> Closed</div>
         <div class="legend-row"><div class="legend-swatch" style="background:var(--red-bg);border-color:var(--red)"></div> Blocked</div>
+        <div class="legend-row" style="color:var(--text3);font-size:10px">Double-click node to open in GitHub</div>
       </div>
     </div>
 
@@ -558,7 +560,7 @@ function parseBodyEdges(issue, issueNums, blockingEdges) {
   }
 }
 
-function buildIssues(rawIssues, blockingEdges) {
+function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
   const issueMap = {};
   rawIssues.forEach(i => { issueMap[i.number] = i; });
   const blockedBy = {};
@@ -579,6 +581,11 @@ function buildIssues(rawIssues, blockingEdges) {
     let status = i.state === 'closed' ? 'closed' : 'open';
     if (status === 'open' && labelNames.some(l => inProgressLabels.has(l))) status = 'inprogress';
     if (status === 'open' && isBlocked) status = 'blocked';
+    // parents: issues this one is a child of
+    const parents = [...parentEdges]
+      .filter(e => e.startsWith(i.number + '->'))
+      .map(e => +e.split('->')[1])
+      .filter(n => !!issueMap[n]);
     return {
       id: i.number, title: i.title, body: i.body || '',
       status, url: i.url || i.html_url,
@@ -586,6 +593,7 @@ function buildIssues(rawIssues, blockingEdges) {
       assignees: assigneeNodes.map(a => typeof a === 'string' ? a : a.login),
       blockedBy: blockedBy[i.number] || [],
       blocksOthers: [],
+      parents,
     };
   });
   issues.forEach(iss => {
@@ -650,25 +658,37 @@ async function fetchIssues(initial = false) {
     //    When running from file:// the REST /dependencies endpoint is CORS-blocked.
     //    Host this file on GitHub Pages (or any https:// server) to fix that.
     const canFetchDeps = cfg.proxyUrl || location.hostname === 'localhost';
+    const parentEdges = new Set(); // child->parent (blue arrows)
     if (canFetchDeps) {
-      const depResults = await Promise.all(all.map(async issue => {
+      // Fetch blocked_by AND sub_issues for every issue in parallel
+      const results = await Promise.all(all.map(async issue => {
+        const out = { num: issue.number, blockedBy: [], children: [] };
         try {
-          const res = await ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies/blocked_by`);
-          if (res.ok) {
-            const deps = await res.json();
-            return { num: issue.number, blockedBy: (Array.isArray(deps) ? deps : []).map(d => d.number) };
+          const [dRes, cRes] = await Promise.all([
+            ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/dependencies/blocked_by`),
+            ghFetch(`/repos/${owner}/${repo}/issues/${issue.number}/sub_issues`),
+          ]);
+          if (dRes.ok) {
+            const deps = await dRes.json();
+            out.blockedBy = (Array.isArray(deps) ? deps : []).map(d => d.number);
+          }
+          if (cRes.ok) {
+            const children = await cRes.json();
+            out.children = (Array.isArray(children) ? children : []).map(c => c.number);
           }
         } catch(e) {}
-        return { num: issue.number, blockedBy: [] };
+        return out;
       }));
-      depResults.forEach(({ num, blockedBy }) => {
+      results.forEach(({ num, blockedBy, children }) => {
         blockedBy.forEach(prereq => {
           if (issueNums.has(prereq)) blockingEdges.add(prereq + '->' + num);
         });
+        children.forEach(child => {
+          if (issueNums.has(child)) parentEdges.add(child + '->' + num); // child -> parent
+        });
       });
     } else {
-      // file:// origin — REST /dependencies is CORS-blocked. Show a one-time warning.
-      if (initial) showCorsWarning(); // no proxy set and not localhost
+      if (initial) showCorsWarning();
     }
 
     // 3. Body text fallback (always runs — catches "blocked by #N" in descriptions)
@@ -679,7 +699,7 @@ async function fetchIssues(initial = false) {
       body: i.body || '', url: i.html_url,
       labels: i.labels || [], assignees: i.assignees || [],
     }));
-    buildIssues(normalised, blockingEdges);
+    buildIssues(normalised, blockingEdges, parentEdges);
     return true;
   } catch (e) {
     console.error('fetchIssues error:', e);
@@ -850,6 +870,15 @@ canvas.addEventListener('mouseup',e=>{
   }
   interaction=null;canvas.style.cursor='default';
 });
+// Double-click a node to open the issue on GitHub
+canvas.addEventListener('dblclick',e=>{
+  const rect=canvas.getBoundingClientRect();
+  const hit=getHitZone(e.clientX-rect.left,e.clientY-rect.top);
+  if(hit.id){
+    const iss=issues.find(i=>i.id===hit.id);
+    if(iss?.url) window.open(iss.url,'_blank','noopener');
+  }
+});
 canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   const rect=canvas.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top;
@@ -884,27 +913,33 @@ function edgePt(cx,cy,hw,hh,udx,udy){
 function drawMap(){
   const W=canvas.width,H=canvas.height;
   ctx.clearRect(0,0,W,H);
-  const dark=window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const arrowColor=dark?'#58a6ff':'#0969da';
-  // Edges — arrow from prereq TO dependent
+  const RED='#cf222e', BLUE=window.matchMedia('(prefers-color-scheme: dark)').matches?'#58a6ff':'#0969da';
+
+  function drawArrow(fromId, toId, color, dash=[]){
+    const a=nodePos[fromId],b=nodePos[toId];
+    if(!a||!b)return;
+    const acx=a.x+a.w/2,acy=a.y+a.h/2,bcx=b.x+b.w/2,bcy=b.y+b.h/2;
+    const as=w2s(acx,acy),bs=w2s(bcx,bcy);
+    const dx=bs.x-as.x,dy=bs.y-as.y,len=Math.sqrt(dx*dx+dy*dy);
+    if(len<4)return;
+    const udx=dx/len,udy=dy/len;
+    const sp=edgePt(acx,acy,a.w/2,a.h/2,udx,udy),sps=w2s(sp.x,sp.y);
+    const ep=edgePt(bcx,bcy,b.w/2,b.h/2,-udx,-udy),eps=w2s(ep.x,ep.y);
+    ctx.save();ctx.strokeStyle=color;ctx.lineWidth=1.5*zoom;ctx.setLineDash(dash.map(d=>d*zoom));
+    ctx.beginPath();ctx.moveTo(sps.x,sps.y);ctx.lineTo(eps.x,eps.y);ctx.stroke();
+    ctx.setLineDash([]);
+    const h=9*zoom;
+    ctx.beginPath();ctx.moveTo(eps.x-udx*h+udy*h*0.4,eps.y-udy*h-udx*h*0.4);ctx.lineTo(eps.x,eps.y);ctx.lineTo(eps.x-udx*h-udy*h*0.4,eps.y-udy*h+udx*h*0.4);ctx.stroke();
+    ctx.restore();
+  }
+
+  // Red: blocking arrows (prereq → dependent)
   issues.forEach(iss=>{
-    (iss.blockedBy||[]).forEach(prereqId=>{
-      const prereq=nodePos[prereqId],dep=nodePos[iss.id];
-      if(!prereq||!dep)return;
-      const acx=prereq.x+prereq.w/2,acy=prereq.y+prereq.h/2;
-      const bcx=dep.x+dep.w/2,bcy=dep.y+dep.h/2;
-      const as=w2s(acx,acy),bs=w2s(bcx,bcy);
-      const dx=bs.x-as.x,dy=bs.y-as.y,len=Math.sqrt(dx*dx+dy*dy);
-      if(len<4)return;
-      const udx=dx/len,udy=dy/len;
-      const sp=edgePt(acx,acy,prereq.w/2,prereq.h/2,udx,udy),sps=w2s(sp.x,sp.y);
-      const ep=edgePt(bcx,bcy,dep.w/2,dep.h/2,-udx,-udy),eps=w2s(ep.x,ep.y);
-      ctx.save();ctx.strokeStyle=arrowColor;ctx.lineWidth=1.5*zoom;
-      ctx.beginPath();ctx.moveTo(sps.x,sps.y);ctx.lineTo(eps.x,eps.y);ctx.stroke();
-      const h=9*zoom;
-      ctx.beginPath();ctx.moveTo(eps.x-udx*h+udy*h*0.4,eps.y-udy*h-udx*h*0.4);ctx.lineTo(eps.x,eps.y);ctx.lineTo(eps.x-udx*h-udy*h*0.4,eps.y-udy*h+udx*h*0.4);ctx.stroke();
-      ctx.restore();
-    });
+    (iss.blockedBy||[]).forEach(prereqId=>drawArrow(prereqId, iss.id, RED));
+  });
+  // Blue dashed: parent arrows (child → parent)
+  issues.forEach(iss=>{
+    (iss.parents||[]).forEach(parentId=>drawArrow(iss.id, parentId, BLUE, [6,3]));
   });
   // Nodes
   issues.forEach(iss=>{
@@ -913,7 +948,7 @@ function drawMap(){
     const col=getColor(iss.status),isSel=selectedId===iss.id;
     ctx.save();
     drawRR(s.x,s.y,sw,sh,6*zoom);ctx.fillStyle=col.fill;ctx.fill();
-    ctx.strokeStyle=isSel?arrowColor:col.stroke;ctx.lineWidth=isSel?2.5*zoom:1*zoom;ctx.stroke();
+    ctx.strokeStyle=isSel?BLUE:col.stroke;ctx.lineWidth=isSel?2.5*zoom:1*zoom;ctx.stroke();
     const cx=s.x+sw/2,cy=s.y+sh/2;
     const idFs=Math.max(9,10*zoom),titleFs=Math.max(10,12*zoom);
     ctx.fillStyle=col.text;ctx.textAlign='center';ctx.textBaseline='middle';
@@ -922,8 +957,13 @@ function drawMap(){
     const maxW=sw-14*zoom;let title=iss.title;
     while(title.length>3&&ctx.measureText(title).width>maxW)title=title.slice(0,-1);
     if(title!==iss.title)title=title.slice(0,-1)+'…';
-    ctx.fillText(title,cx,cy+titleFs*0.8);
-    const hsz=HANDLE*zoom*0.8;ctx.fillStyle=isSel?arrowColor:col.stroke;ctx.globalAlpha=0.4;
+    const ty=cy+titleFs*0.8;
+    ctx.fillText(title,cx,ty);
+    // Underline the title to hint it is clickable
+    const tw=ctx.measureText(title).width;
+    ctx.beginPath();ctx.moveTo(cx-tw/2,ty+2*zoom);ctx.lineTo(cx+tw/2,ty+2*zoom);
+    ctx.strokeStyle=col.text;ctx.lineWidth=0.7*zoom;ctx.stroke();
+    const hsz=HANDLE*zoom*0.8;ctx.fillStyle=isSel?BLUE:col.stroke;ctx.globalAlpha=0.4;
     [[s.x+sw-hsz,s.y+sh-hsz],[s.x+sw-hsz,s.y],[s.x,s.y+sh-hsz],[s.x,s.y]].forEach(([hx,hy])=>ctx.fillRect(hx,hy,hsz,hsz));
     [s.x+sw-hsz,s.x].forEach(hx=>ctx.fillRect(hx,s.y+sh/2-hsz/3,hsz,hsz*0.6));
     [s.y+sh-hsz,s.y].forEach(hy=>ctx.fillRect(s.x+sw/2-hsz/3,hy,hsz*0.6,hsz));
