@@ -606,11 +606,12 @@ function buildIssues(rawIssues, blockingEdges, parentEdges = new Set()) {
     const labelNames = labelNodes.map(l => l.name.toLowerCase());
     const assigneeNodes = Array.isArray(i.assignees) ? i.assignees : (i.assignees?.nodes || []);
     const isBlocked = (blockedBy[i.uid] || []).some(uid => {
-      const dep = issueMap[uid]; return dep && dep.state === 'open';
+      const dep = issueMap[uid]; return dep && dep.state.toLowerCase() === 'open';
     });
     const ps = (i.projectStatus || '').toLowerCase();
+    const stateNorm = (i.state || '').toLowerCase();
     let status = 'todo';
-    if (i.state === 'closed') {
+    if (stateNorm === 'closed') {
       if (/bin|cancel|drop|won.?t.?do|wont|discard|archive/i.test(ps)) status = 'binned';
       else status = 'done';
     } else {
@@ -1025,49 +1026,99 @@ function showDetail(id) {
 function closeDetail() { selectedId=null; document.getElementById('detail').classList.remove('open'); renderSidebar(); drawMap(); }
 
 // ── Layout ────────────────────────────────────────────────────────────
-function topoLayers() {
-  const ids = issues.map(i=>i.id);
-  const placed = new Set(), layers = [];
-  let remaining = [...ids];
-  while (remaining.length) {
-    const layer = remaining.filter(id=>{
-      const iss=issues.find(i=>i.id===id);
-      return (iss.blockedBy||[]).every(dep=>placed.has(dep)||!ids.includes(dep));
+// Return all directed edges: blocker->blocked and parent->child
+function allEdges() {
+  const edges = []; // {from, to}
+  issues.forEach(iss => {
+    (iss.blockedBy||[]).forEach(from => edges.push({from, to: iss.id}));
+    (iss.parents||[]).forEach(from => edges.push({from, to: iss.id}));
+  });
+  return edges;
+}
+
+// Assign each node a column (layer) using longest-path layering.
+// Nodes with no incoming edges go in column 0.
+// Each node's column = max(predecessor columns) + 1.
+// This ensures all arrows point left-to-right with no back-edges.
+function assignLayers() {
+  const ids = issues.map(i => i.id);
+  const idSet = new Set(ids);
+  const edges = allEdges().filter(e => idSet.has(e.from) && idSet.has(e.to));
+
+  // Build predecessor map
+  const preds = {}; // id -> [ids that point to it]
+  ids.forEach(id => { preds[id] = []; });
+  edges.forEach(({from, to}) => preds[to].push(from));
+
+  // Iterative longest-path: keep updating until stable
+  const layer = {};
+  ids.forEach(id => { layer[id] = 0; });
+  for (let pass = 0; pass < ids.length; pass++) {
+    let changed = false;
+    ids.forEach(id => {
+      const maxPred = preds[id].reduce((m, p) => Math.max(m, (layer[p] ?? 0) + 1), 0);
+      if (maxPred > layer[id]) { layer[id] = maxPred; changed = true; }
     });
-    if (!layer.length) { layers.push(remaining); break; }
-    layers.push(layer);
-    layer.forEach(id=>placed.add(id));
-    remaining = remaining.filter(id=>!placed.has(id));
+    if (!changed) break;
+  }
+
+  // Group by layer
+  const numLayers = Math.max(...Object.values(layer)) + 1;
+  const layers = Array.from({length: numLayers}, () => []);
+  ids.forEach(id => layers[layer[id]].push(id));
+  return layers;
+}
+
+// Sugiyama barycenter ordering: for each layer (left-to-right pass),
+// sort nodes by average position of their neighbours in the adjacent layer.
+// Run multiple passes to reduce crossings.
+function orderLayers(layers) {
+  const posOf = {}; // id -> current y-rank within its layer
+  layers.forEach(layer => layer.forEach((id, i) => { posOf[id] = i; }));
+
+  for (let pass = 0; pass < 4; pass++) {
+    // Forward pass
+    for (let li = 1; li < layers.length; li++) {
+      layers[li].sort((a, b) => {
+        const issA = issues.find(i => i.id === a);
+        const issB = issues.find(i => i.id === b);
+        return avgPos(issA, posOf, li, layers, 'back') - avgPos(issB, posOf, li, layers, 'back');
+      });
+      layers[li].forEach((id, i) => { posOf[id] = i; });
+    }
+    // Backward pass
+    for (let li = layers.length - 2; li >= 0; li--) {
+      layers[li].sort((a, b) => {
+        const issA = issues.find(i => i.id === a);
+        const issB = issues.find(i => i.id === b);
+        return avgPos(issA, posOf, li, layers, 'fwd') - avgPos(issB, posOf, li, layers, 'fwd');
+      });
+      layers[li].forEach((id, i) => { posOf[id] = i; });
+    }
   }
   return layers;
 }
 
-// smartLayout: Sugiyama-inspired left-to-right layout.
-// 1. Topological layer assignment
-// 2. Within each layer, order nodes to minimise edge crossings (barycenter heuristic)
-// 3. Spread vertically with padding
+function avgPos(iss, posOf, li, layers, dir) {
+  if (!iss) return 999;
+  // Neighbours in previous layer (back) or next layer (fwd)
+  const neighbours = dir === 'back'
+    ? [...(iss.blockedBy||[]), ...(iss.parents||[])]
+    : [...(iss.blocksOthers||[]), ...issues.filter(i=>(i.parents||[]).includes(iss.id)).map(i=>i.id)];
+  const positions = neighbours.map(n => posOf[n]).filter(v => v !== undefined);
+  if (!positions.length) return posOf[iss.id] ?? 999; // keep current position if no neighbours
+  return positions.reduce((s, v) => s + v, 0) / positions.length;
+}
+
 function smartLayout() {
   const W = canvas.width || 800, H = canvas.height || 500;
-  const layers = topoLayers();
+  const layers = orderLayers(assignLayers());
+  if (!layers.length) return;
+
   const numL = layers.length;
-  if (numL === 0) return;
-
-  const HGAP = Math.max(DEFAULT_W + 60, (W - 60) / numL);
-  const VGAP = DEFAULT_H + 32;
-
-  // Order within each layer by barycenter of connected nodes in previous layer
-  for (let li = 1; li < layers.length; li++) {
-    const prev = layers[li - 1];
-    const prevIdx = {};
-    prev.forEach((id, i) => { prevIdx[id] = i; });
-    layers[li].sort((a, b) => {
-      const issA = issues.find(i => i.id === a);
-      const issB = issues.find(i => i.id === b);
-      const baryA = barycentre(issA, prevIdx);
-      const baryB = barycentre(issB, prevIdx);
-      return baryA - baryB;
-    });
-  }
+  const maxInLayer = Math.max(...layers.map(l => l.length));
+  const HGAP = Math.max(DEFAULT_W + 80, (W - 80) / numL);
+  const VGAP = Math.max(DEFAULT_H + 28, Math.min(DEFAULT_H + 60, (H - 60) / maxInLayer));
 
   layers.forEach((layer, li) => {
     const totalH = layer.length * VGAP - (VGAP - DEFAULT_H);
@@ -1075,7 +1126,7 @@ function smartLayout() {
     layer.forEach((id, ri) => {
       const ex = nodePos[id];
       nodePos[id] = {
-        x: 24 + li * HGAP,
+        x: 40 + li * HGAP,
         y: startY + ri * VGAP,
         w: ex ? ex.w : DEFAULT_W,
         h: ex ? ex.h : DEFAULT_H,
@@ -1086,14 +1137,6 @@ function smartLayout() {
   pan = { x: 0, y: 0 }; zoom = 1;
   saveLayout();
   drawMap();
-}
-
-function barycentre(iss, prevLayerIdx) {
-  if (!iss) return 0;
-  const neighbours = [...(iss.blockedBy||[]), ...(iss.parents||[])];
-  const idxs = neighbours.map(n => prevLayerIdx[n]).filter(v => v !== undefined);
-  if (!idxs.length) return 999;
-  return idxs.reduce((s, v) => s + v, 0) / idxs.length;
 }
 
 function autoLayout() { smartLayout(); }
