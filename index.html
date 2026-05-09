@@ -656,8 +656,10 @@ function showCorsWarning() {
 
 // Fetch project Status and target date for all issues via GraphQL
 async function fetchProjectMeta(owner, projectNum, out) {
+  // Try org first, fall back to user if it errors
   const isOrg = await checkIsOrg(owner);
   const ownerType = isOrg ? 'organization' : 'user';
+  console.log(`Fetching project as ${ownerType}: ${owner}`);
   const q = `
     query($owner:String!,$num:Int!,$cursor:String){
       ${ownerType}(login:$owner){
@@ -691,7 +693,7 @@ async function fetchProjectMeta(owner, projectNum, out) {
     const data = await ghGraphQL(q, { owner, num: projectNum, cursor });
     if (data.errors) { console.warn('Project meta errors:', data.errors.map(e=>e.message).join('; ')); break; }
     const proj = data?.data?.[ownerType]?.projectV2;
-    if (!proj) { console.warn('Project not found — check project number and token has read:project scope'); break; }
+    if (!proj) { console.warn(`Project ${projectNum} not found for ${ownerType} '${owner}' — check project number and token has read:project scope. GraphQL response:`, JSON.stringify(data?.data)); break; }
     for (const item of proj.items.nodes) {
       const issueNum = item.content?.number;
       if (!issueNum) continue;
@@ -723,8 +725,19 @@ async function fetchProjectMeta(owner, projectNum, out) {
 }
 
 async function checkIsOrg(owner) {
-  const data = await ghGraphQL(`query($login:String!){ organization(login:$login){ id } }`, { login: owner });
-  return !!data?.data?.organization?.id;
+  try {
+    // Try a combined query — whichever field resolves without error tells us the type
+    const data = await ghGraphQL(`
+      query($login:String!){
+        organization(login:$login){ id }
+      }`, { login: owner });
+    // No errors and org id present = it's an org
+    if (!data.errors && data?.data?.organization?.id) return true;
+    // Errors mentioning "Could not resolve" = it's a user, not an org
+    return false;
+  } catch(e) {
+    return false;
+  }
 }
 
 // Fetch all issues via REST, then get blocking data from Projects v2 + body text
