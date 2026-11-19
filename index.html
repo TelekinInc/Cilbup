@@ -465,6 +465,11 @@ let issues = [];
 let nodePos = {};
 let selectedId = null;
 let pollTimer = null;
+const DEP_TTL = 5 * 60 * 1000;   // re-fetch each issue's dependencies at most every 5 min
+const DEP_CONCURRENCY = 6;
+let depCache = {};                // uid -> { t, blockers:[{n}], children:[{n}] }
+let forceDeps = false;
+let depWarning = '';
 let lastEtag = null;
 let interaction = null;
 let sidebarSort = { key: 'date', dir: 1 }; // key: 'id'|'date', dir: 1=asc,-1=desc
@@ -536,6 +541,7 @@ function updateHeaderLabel() {
 
 function disconnect() {
   stopPolling();
+  depCache = {}; depWarning = '';
   issues = []; nodePos = {}; selectedId = null;
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('setup').style.display = 'flex';
@@ -766,36 +772,64 @@ async function fetchIssues(initial = false) {
     const parentEdges   = new Set(); // "childUid->parentUid"
 
     // ── Fetch blocking + sub-issues per issue via proxy ───────────
+    // Dependencies are cached per issue. A failed request (rate limit,
+    // proxy hiccup) keeps the last good data instead of wiping the edges,
+    // and unchanged issues are only re-fetched every DEP_TTL ms to stay
+    // well inside GitHub's 5000 requests/hour limit.
     const canFetchDeps = cfg.proxyUrl || location.hostname === 'localhost';
     if (canFetchDeps) {
-      await Promise.all(all.map(async issue => {
-        const [iOwner, iRepo] = issue.repo.split('/');
-        try {
-          const [dRes, cRes] = await Promise.all([
-            ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/dependencies/blocked_by`),
-            ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/sub_issues`),
-          ]);
-          if (dRes.ok) {
+      const now = Date.now();
+      const manual = initial || forceDeps;
+      forceDeps = false;
+      const due = all.filter(i => manual || !depCache[i.uid] || now - depCache[i.uid].t > DEP_TTL);
+      let failed = 0, limited = false, idx = 0;
+      const worker = async () => {
+        while (idx < due.length) {
+          const issue = due[idx++];
+          const [iOwner, iRepo] = issue.repo.split('/');
+          try {
+            const [dRes, cRes] = await Promise.all([
+              ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/dependencies/blocked_by`),
+              ghFetch(`/repos/${iOwner}/${iRepo}/issues/${issue.number}/sub_issues`),
+            ]);
+            if (!dRes.ok || !cRes.ok) {
+              failed++;
+              if ([403, 429].includes(dRes.status) || [403, 429].includes(cRes.status)) limited = true;
+              continue; // keep previous cache entry
+            }
             const deps = await dRes.json();
-            (Array.isArray(deps) ? deps : []).forEach(d => {
-              // Match dep to a uid — same repo first, then cross-repo by number
-              const depUid = issue.repo + '#' + d.number;
-              const fallback = String(d.number);
-              const target = byUid[depUid] ? depUid : byUid[fallback] ? fallback : null;
-              if (target) blockingEdges.add(target + '->' + issue.uid);
-            });
-          }
-          if (cRes.ok) {
             const children = await cRes.json();
-            (Array.isArray(children) ? children : []).forEach(c => {
-              const childUid = issue.repo + '#' + c.number;
-              const fallback = String(c.number);
-              const child = byUid[childUid] ? childUid : byUid[fallback] ? fallback : null;
-              if (child) parentEdges.add(child + '->' + issue.uid);
-            });
-          }
-        } catch(e) {}
-      }));
+            depCache[issue.uid] = {
+              t: Date.now(),
+              blockers: (Array.isArray(deps) ? deps : []).map(d => ({ n: d.number })),
+              children: (Array.isArray(children) ? children : []).map(c => ({ n: c.number })),
+            };
+          } catch(e) { failed++; }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(DEP_CONCURRENCY, due.length) }, worker));
+
+      if (failed) {
+        depWarning = limited ? 'Rate limited – showing cached edges' : 'Some dependency fetches failed – showing cached edges';
+        console.warn(`Dependency fetch: ${failed}/${due.length} failed${limited ? ' (likely GitHub rate limit)' : ''}; using cached edges where available`);
+      } else { depWarning = ''; }
+
+      all.forEach(issue => {
+        const c = depCache[issue.uid];
+        if (!c) return;
+        c.blockers.forEach(d => {
+          const depUid = issue.repo + '#' + d.n;
+          const fallback = String(d.n);
+          const target = byUid[depUid] ? depUid : byUid[fallback] ? fallback : null;
+          if (target) blockingEdges.add(target + '->' + issue.uid);
+        });
+        c.children.forEach(ch => {
+          const childUid = issue.repo + '#' + ch.n;
+          const fallback = String(ch.n);
+          const child = byUid[childUid] ? childUid : byUid[fallback] ? fallback : null;
+          if (child) parentEdges.add(child + '->' + issue.uid);
+        });
+      });
     } else {
       if (initial) showCorsWarning();
     }
@@ -804,6 +838,7 @@ async function fetchIssues(initial = false) {
     all.forEach(i => parseBodyEdgesUid(i, byUid, blockingEdges));
 
     buildIssues(all, blockingEdges, parentEdges);
+    if (depWarning) setStatus('error', depWarning);
     return true;
   } catch(e) {
     console.error('fetchIssues error:', e);
@@ -939,7 +974,7 @@ function startPolling() {
   if (cfg.poll > 0) pollTimer = setInterval(() => fetchIssues(), cfg.poll * 1000);
 }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
-function refresh() { fetchIssues(); }
+function refresh() { forceDeps = true; fetchIssues(); }
 
 // ── Status ────────────────────────────────────────────────────────────
 function setStatus(state, text) {
